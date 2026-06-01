@@ -1,0 +1,18 @@
+{
+  "name": "aluguel-materiais",
+  "version": "1.0.0",
+  "description": "Controle de aluguel/emprestimo de materiais de comunicacao e brindes para cooperativa. Banco de dados em CSV, sem servidor externo.",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --enable-logging"
+  },
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^31.0.0"
+  },
+  "dependencies": {
+    "papaparse": "^5.4.1"
+  }
+}

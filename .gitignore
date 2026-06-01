@@ -1,0 +1,15 @@
+node_modules/
+dist/
+out/
+*.log
+.DS_Store
+Thumbs.db
+
+# Lock files criados em tempo de execucao na pasta de dados
+*.lock
+*.tmp
+
+# Banco de dados local em CSV (nao versionar)
+dados/
+data/
+*.csv

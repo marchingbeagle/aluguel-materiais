@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self';" />
+    <title>Aluguel de Materiais</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark">AM</span>
+          <div>
+            <strong>Aluguel de Materiais</strong>
+            <small>Controle da cooperativa</small>
+          </div>
+        </div>
+        <nav class="nav">
+          <button class="nav-item active" data-view="dashboard">Painel</button>
+          <button class="nav-item" data-view="materials">Materiais</button>
+          <button class="nav-item" data-view="agencies">Agencias</button>
+          <button class="nav-item" data-view="rentals">Alugueis</button>
+          <button class="nav-item" data-view="calendar">Calendario</button>
+        </nav>
+        <div class="sidebar-footer">
+          <span id="syncDot" class="sync-dot" title="Estado da sincronizacao"></span>
+          <span id="syncLabel">Sincronizado</span>
+          <button id="refreshBtn" class="btn btn-ghost btn-sm">Atualizar</button>
+          <button id="settingsBtn" class="icon-btn" aria-label="Configuracoes" title="Configuracoes">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+            </svg>
+          </button>
+        </div>
+      </aside>
+
+      <main class="content">
+        <!-- PAINEL -->
+        <section id="view-dashboard" class="view active">
+          <header class="view-header">
+            <h1>Painel</h1>
+            <p class="muted">Visao geral do estoque e dos alugueis.</p>
+          </header>
+          <div class="cards">
+            <div class="card"><span class="card-label">Materiais cadastrados</span><span class="card-value" id="stat-materials">0</span></div>
+            <div class="card"><span class="card-label">Unidades disponiveis</span><span class="card-value" id="stat-available">0</span></div>
+            <div class="card"><span class="card-label">Unidades alugadas</span><span class="card-value" id="stat-rented">0</span></div>
+            <div class="card card-warn"><span class="card-label">Devolucoes atrasadas</span><span class="card-value" id="stat-overdue">0</span></div>
+          </div>
+          <div class="panel">
+            <h2>Alugueis ativos</h2>
+            <div class="table-wrap">
+              <table id="dashboard-active">
+                <thead>
+                  <tr><th>Material</th><th>Agencia</th><th>Qtd</th><th>Retirada</th><th>Prev. devolucao</th><th>Situacao</th></tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- MATERIAIS -->
+        <section id="view-materials" class="view">
+          <header class="view-header">
+            <h1>Materiais</h1>
+            <button class="btn btn-primary" id="addMaterialBtn">Novo material</button>
+          </header>
+          <div class="toolbar">
+            <input type="search" id="materialSearch" placeholder="Buscar por nome, categoria..." />
+            <select id="materialCategoryFilter"><option value="">Todas as categorias</option></select>
+          </div>
+          <div class="table-wrap">
+            <table id="materials-table">
+              <thead>
+                <tr><th>Nome</th><th>Categoria</th><th>Total</th><th>Alugado</th><th>Disponivel</th><th>Observacoes</th><th class="col-actions">Acoes</th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- AGENCIAS -->
+        <section id="view-agencies" class="view">
+          <header class="view-header">
+            <h1>Agencias</h1>
+            <button class="btn btn-primary" id="addAgencyBtn">Nova agencia</button>
+          </header>
+          <div class="toolbar">
+            <input type="search" id="agencySearch" placeholder="Buscar por nome, contato, e-mail..." />
+          </div>
+          <div class="table-wrap">
+            <table id="agencies-table">
+              <thead>
+                <tr><th>Nome</th><th>Contato</th><th>Telefone</th><th>E-mail</th><th>Observacoes</th><th class="col-actions">Acoes</th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- ALUGUEIS -->
+        <section id="view-rentals" class="view">
+          <header class="view-header">
+            <h1>Alugueis</h1>
+            <button class="btn btn-primary" id="addRentalBtn">Novo aluguel</button>
+          </header>
+          <div class="toolbar">
+            <input type="search" id="rentalSearch" placeholder="Buscar por material ou agencia..." />
+            <select id="rentalStatusFilter">
+              <option value="">Todos</option>
+              <option value="alugado">Alugados</option>
+              <option value="devolvido">Devolvidos</option>
+              <option value="overdue">Atrasados</option>
+            </select>
+          </div>
+          <div class="table-wrap">
+            <table id="rentals-table">
+              <thead>
+                <tr><th>Material</th><th>Agencia</th><th>Qtd</th><th>Retirada</th><th>Prev. devolucao</th><th>Devolvido em</th><th>Situacao</th><th class="col-actions">Acoes</th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- CALENDARIO -->
+        <section id="view-calendar" class="view">
+          <header class="view-header view-header-cal">
+            <h1>Calendario</h1>
+            <div class="cal-controls">
+              <div class="cal-nav">
+                <button class="btn btn-sm" id="calPrev" aria-label="Anterior" title="Anterior">&#8249;</button>
+                <button class="btn btn-sm" id="calToday">Hoje</button>
+                <button class="btn btn-sm" id="calNext" aria-label="Proximo" title="Proximo">&#8250;</button>
+              </div>
+              <span id="calTitle" class="cal-title"></span>
+              <div class="seg">
+                <button id="calModeMonth" class="seg-btn active">Mes</button>
+                <button id="calModeWeek" class="seg-btn">Semana</button>
+              </div>
+            </div>
+          </header>
+          <div class="cal-legend">
+            <span class="cal-dot cal-dot-active"></span> No prazo
+            <span class="cal-dot cal-dot-overdue"></span> Atrasado
+            <span class="cal-dot cal-dot-returned"></span> Devolvido
+          </div>
+          <div id="calendar" class="calendar"></div>
+        </section>
+
+        <!-- CONFIGURACOES -->
+        <section id="view-settings" class="view">
+          <header class="view-header">
+            <h1>Configuracoes</h1>
+          </header>
+          <div class="panel">
+            <h2>Pasta de dados (CSV)</h2>
+            <p class="muted">Aponte para a mesma pasta sincronizada (OneDrive/Google Drive/Dropbox) em todos os computadores que vao compartilhar os dados.</p>
+            <div class="field-inline">
+              <input type="text" id="dataDirInput" readonly />
+              <button class="btn btn-primary" id="chooseDirBtn">Selecionar pasta...</button>
+            </div>
+            <div id="filesReport" class="files-report"></div>
+            <button class="btn" id="validateFilesBtn">Validar / criar arquivos</button>
+          </div>
+          <div class="panel">
+            <h2>Identificacao deste computador</h2>
+            <p class="muted">Usado para controle de concorrencia (lock) ao salvar.</p>
+            <code id="userIdValue" class="mono"></code>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <!-- Modal de formulario -->
+    <div id="modal" class="modal-overlay hidden">
+      <div class="modal" role="dialog" aria-modal="true">
+        <header class="modal-header">
+          <h3 id="modalTitle">Titulo</h3>
+          <button class="modal-close" id="modalClose" aria-label="Fechar">&times;</button>
+        </header>
+        <form id="modalForm">
+          <div id="modalBody" class="modal-body"></div>
+          <div id="modalError" class="form-error hidden"></div>
+          <footer class="modal-footer">
+            <button type="button" class="btn btn-ghost" id="modalCancel">Cancelar</button>
+            <button type="submit" class="btn btn-primary" id="modalSubmit">Salvar</button>
+          </footer>
+        </form>
+      </div>
+    </div>
+
+    <!-- Dialogo de confirmacao -->
+    <div id="confirm" class="modal-overlay hidden">
+      <div class="modal modal-sm" role="alertdialog" aria-modal="true">
+        <header class="modal-header"><h3 id="confirmTitle">Confirmar</h3></header>
+        <div class="modal-body"><p id="confirmMessage"></p></div>
+        <footer class="modal-footer">
+          <button type="button" class="btn btn-ghost" id="confirmCancel">Cancelar</button>
+          <button type="button" class="btn btn-danger" id="confirmOk">Excluir</button>
+        </footer>
+      </div>
+    </div>
+
+    <!-- Pop-up de detalhes do dia (somente leitura) -->
+    <div id="dayModal" class="modal-overlay hidden">
+      <div class="modal" role="dialog" aria-modal="true">
+        <header class="modal-header">
+          <h3 id="dayModalTitle">Dia</h3>
+          <button class="modal-close" id="dayModalClose" aria-label="Fechar">&times;</button>
+        </header>
+        <div id="dayModalBody" class="modal-body day-modal-body"></div>
+      </div>
+    </div>
+
+    <div id="toasts" class="toasts"></div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
