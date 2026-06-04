@@ -110,6 +110,17 @@ Nenhum icone personalizado e fornecido: o electron-builder usa o icone padrao do
 - **Revalidacao de regras**: o limite de disponibilidade e checado com os dados frescos do disco, evitando que duas pessoas aluguem a ultima unidade.
 - **Auto-refresh**: o app observa a pasta e recarrega sozinho quando detecta mudancas (suas ou de outro computador). Tambem ha o botao **Atualizar**.
 
+Na pratica, o fluxo e este:
+
+1. Cada instalacao do app recebe um `userId` local, salvo em `settings.json`. Ele nao e login nem permissao; serve apenas para identificar quem criou o lock.
+2. Antes de salvar qualquer material, agencia ou aluguel, o app tenta criar `.app.lock` na pasta de dados usando criacao exclusiva de arquivo. Se o arquivo ja existe, ele espera alguns segundos. Se o lock ficou sem atualizacao por tempo demais, e tratado como orfao e pode ser removido.
+3. Depois de obter o lock, o app rele o CSV do disco. Ou seja, ele nao grava em cima do estado antigo que estava na tela; ele pega a versao mais recente, aplica a mudanca solicitada e so entao grava.
+4. A gravacao e atomica: primeiro escreve um arquivo temporario e depois renomeia por cima do CSV final. Isso reduz o risco de arquivo truncado se o app fechar no meio da operacao.
+5. Em edicoes, o app envia junto o estado original do registro (`_baseline`). Se outro usuario alterou o mesmo registro entre o carregamento da tela e o salvamento, a operacao e recusada com conflito e o usuario deve recarregar.
+6. Regras sensiveis sao recalculadas dentro do lock. Por exemplo: ao criar ou editar um aluguel ativo, a disponibilidade do material e recalculada com os alugueis atuais do CSV, para evitar alugar mais unidades do que existem.
+
+Esse mecanismo e adequado para poucas pessoas usando ocasionalmente a mesma pasta sincronizada. Ele evita a maioria dos conflitos comuns, mas nao substitui um banco de dados com transacoes.
+
 ### Limitacoes (importante)
 
 - Uma pasta CSV sincronizada **nao** e um banco de dados transacional. Existe um atraso de sincronizacao (alguns segundos): mudancas de um computador so aparecem nos outros depois que a nuvem sincroniza.
