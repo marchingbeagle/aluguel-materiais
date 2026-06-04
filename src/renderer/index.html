@@ -60,6 +60,25 @@
               </table>
             </div>
           </div>
+          <div class="panel">
+            <div class="panel-head">
+              <h2>Agencias com mais reservas</h2>
+              <select id="topAgenciesPeriod" aria-label="Periodo do ranking">
+                <option value="month">Mes atual</option>
+                <option value="last30">Ultimos 30 dias</option>
+                <option value="year">Ano atual</option>
+                <option value="all">Todos</option>
+              </select>
+            </div>
+            <div class="table-wrap">
+              <table id="top-agencies">
+                <thead>
+                  <tr><th>Codigo</th><th>Agencia</th><th>Reservas</th><th>Qtd. total</th></tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
         </section>
 
         <!-- MATERIAIS -->
@@ -69,13 +88,12 @@
             <button class="btn btn-primary" id="addMaterialBtn">Novo material</button>
           </header>
           <div class="toolbar">
-            <input type="search" id="materialSearch" placeholder="Buscar por nome, categoria..." />
-            <select id="materialCategoryFilter"><option value="">Todas as categorias</option></select>
+            <input type="search" id="materialSearch" placeholder="Buscar por nome, descricao..." />
           </div>
           <div class="table-wrap">
             <table id="materials-table">
               <thead>
-                <tr><th>Nome</th><th>Categoria</th><th>Total</th><th>Alugado</th><th>Disponivel</th><th>Observacoes</th><th class="col-actions">Acoes</th></tr>
+                <tr><th>Nome</th><th>Total</th><th>Alugado</th><th>Disponivel</th><th>Observacoes</th><th class="col-actions">Acoes</th></tr>
               </thead>
               <tbody></tbody>
             </table>
@@ -94,7 +112,7 @@
           <div class="table-wrap">
             <table id="agencies-table">
               <thead>
-                <tr><th>Nome</th><th>Contato</th><th>Telefone</th><th>E-mail</th><th>Observacoes</th><th class="col-actions">Acoes</th></tr>
+                <tr><th>Codigo</th><th>Nome</th><th>Contato</th><th>Telefone</th><th>E-mail</th><th>Observacoes</th><th class="col-actions">Acoes</th></tr>
               </thead>
               <tbody></tbody>
             </table>
@@ -107,19 +125,42 @@
             <h1>Alugueis</h1>
             <button class="btn btn-primary" id="addRentalBtn">Novo aluguel</button>
           </header>
-          <div class="toolbar">
-            <input type="search" id="rentalSearch" placeholder="Buscar por material ou agencia..." />
-            <select id="rentalStatusFilter">
-              <option value="">Todos</option>
-              <option value="alugado">Alugados</option>
-              <option value="devolvido">Devolvidos</option>
-              <option value="overdue">Atrasados</option>
-            </select>
+          <div class="filters">
+            <div class="filters-row">
+              <input type="search" id="rentalSearch" placeholder="Buscar por material ou agencia..." />
+              <select id="rentalAgencyFilter"><option value="">Todas as agencias</option></select>
+              <input type="text" id="rentalAgencyCodeFilter" inputmode="numeric" placeholder="Codigo da agencia" />
+              <select id="rentalMaterialFilter"><option value="">Todos os materiais</option></select>
+              <select id="rentalStatusFilter">
+                <option value="">Todas as situacoes</option>
+                <option value="alugado">Alugados</option>
+                <option value="devolvido">Devolvidos</option>
+                <option value="overdue">Atrasados</option>
+              </select>
+            </div>
+            <div class="filters-row">
+              <label class="filter-range">Retirada de
+                <input type="date" id="rentalCheckoutFrom" />
+              </label>
+              <label class="filter-range">ate
+                <input type="date" id="rentalCheckoutTo" />
+              </label>
+              <label class="filter-range">Prev. devolucao de
+                <input type="date" id="rentalReturnFrom" />
+              </label>
+              <label class="filter-range">ate
+                <input type="date" id="rentalReturnTo" />
+              </label>
+              <label class="filter-check">
+                <input type="checkbox" id="rentalOverdueOnly" /> Somente atrasados
+              </label>
+              <button type="button" class="btn btn-sm" id="rentalClearFilters">Limpar filtros</button>
+            </div>
           </div>
           <div class="table-wrap">
             <table id="rentals-table">
               <thead>
-                <tr><th>Material</th><th>Agencia</th><th>Qtd</th><th>Retirada</th><th>Prev. devolucao</th><th>Devolvido em</th><th>Situacao</th><th class="col-actions">Acoes</th></tr>
+                <tr><th>Cod.</th><th>Material</th><th>Agencia</th><th>Qtd</th><th>Retirada</th><th>Prev. devolucao</th><th>Devolvido em</th><th>Situacao</th><th class="col-actions">Acoes</th></tr>
               </thead>
               <tbody></tbody>
             </table>

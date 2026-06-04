@@ -6,10 +6,11 @@ Os dados ficam em arquivos **CSV** que podem ser abertos e editados no Excel. Na
 
 ## Recursos
 
-- **Painel**: total de materiais, unidades disponiveis, unidades alugadas e devolucoes atrasadas, alem da lista de alugueis ativos.
-- **Materiais**: cadastro, edicao, exclusao, busca e filtro por categoria. Calcula automaticamente a quantidade disponivel.
-- **Agencias**: cadastro, edicao, exclusao e busca.
-- **Alugueis**: registrar retirada (material, agencia, quantidade, datas), impedir alugar mais do que o disponivel e marcar devolucao.
+- **Painel**: total de materiais, unidades disponiveis, unidades alugadas e devolucoes atrasadas, a lista de alugueis ativos e o ranking de **agencias com mais reservas** (com codigo, nome, total de reservas e quantidade total), filtravel por periodo (mes atual, ultimos 30 dias, ano atual ou todos).
+- **Materiais**: cadastro, edicao, exclusao e busca por nome/descricao. Calcula automaticamente a quantidade disponivel.
+- **Agencias**: cadastro, edicao, exclusao e busca. Cada agencia tem um **codigo** numerico unico (ex.: `01`, `02`, `03`), exibido nas listas, formularios e no calendario.
+- **Alugueis**: registrar retirada (material, agencia, quantidade, datas), impedir alugar mais do que o disponivel e marcar devolucao. Filtros por agencia, codigo da agencia, material, situacao, faixas de data (retirada e devolucao prevista) e somente atrasados, com botao para limpar os filtros.
+- **Calendario**: visao mensal e semanal dos alugueis. Cada entrada mostra o **codigo da agencia** em destaque, seguido do material e da quantidade, para identificar rapidamente a agencia.
 - **Configuracoes**: escolher a pasta dos CSV, ver os caminhos atuais, validar e criar os arquivos que faltarem.
 - **Concorrencia**: lock de escrita, releitura antes de gravar e auto-refresh quando os arquivos mudam.
 
@@ -29,6 +30,62 @@ npm start
 ```
 
 No primeiro uso, a pasta de dados padrao fica dentro do perfil do usuario. Va em **Configuracoes** para mudar para a pasta desejada.
+
+## Gerar executaveis (build)
+
+O empacotamento usa o [electron-builder](https://www.electron.build/). Ha tres scripts:
+
+```powershell
+npm run build:portable   # gera um executavel portatil (.exe que roda sem instalar)
+npm run build:exe        # gera um instalador .exe (NSIS)
+npm run build:win        # gera os dois de uma vez (reaproveita o download do Electron)
+```
+
+Os artefatos sao gravados na pasta `dist/`.
+
+### Ambientes corporativos (proxy e certificado)
+
+Em redes corporativas, o download do Electron e dos binarios auxiliares (NSIS, winCodeSign) costuma falhar por causa de proxy e de certificados internos. Configure as variaveis de ambiente abaixo **no PowerShell, na mesma sessao** em que vai rodar o build. Nao guarde credenciais nem hosts internos no repositorio.
+
+```powershell
+# Proxy corporativo (inclua usuario:senha apenas se obrigatorio; nao versione isso)
+$env:HTTP_PROXY  = "http://proxy.suaempresa:8080"
+$env:HTTPS_PROXY = "http://proxy.suaempresa:8080"
+
+# Certificado raiz da empresa (resolve "unable to get local issuer certificate")
+$env:NODE_EXTRA_CA_CERTS = "C:\caminho\para\certificado-raiz.pem"
+
+# (Opcional) Espelho interno para baixar o Electron e os binarios do electron-builder
+$env:ELECTRON_MIRROR = "https://repositorio-interno/electron/"
+$env:ELECTRON_BUILDER_BINARIES_MIRROR = "https://repositorio-interno/electron-builder-binaries/"
+
+# Depois, rode o build normalmente:
+npm run build:win
+```
+
+Para o `npm install` atras do proxy, voce tambem pode configurar o npm (uma vez):
+
+```powershell
+npm config set proxy http://proxy.suaempresa:8080
+npm config set https-proxy http://proxy.suaempresa:8080
+npm config set cafile "C:\caminho\para\certificado-raiz.pem"
+```
+
+### Cache local / build offline
+
+O electron-builder reaproveita o Electron ja baixado. Para reutilizar um zip baixado previamente (ou rodar offline), aponte o cache antes do build:
+
+```powershell
+# Reaproveita/define a pasta de cache do Electron
+$env:ELECTRON_CACHE = "C:\caminho\para\.cache\electron"
+$env:electron_config_cache = $env:ELECTRON_CACHE
+```
+
+Fallback totalmente offline: baixe em outra maquina (com internet) o arquivo `electron-vXX.X.X-win32-x64.zip` correspondente a versao do Electron usada (veja `devDependencies` no `package.json`) e coloque-o dentro de `%LOCALAPPDATA%\electron\Cache` (ou na pasta apontada por `ELECTRON_CACHE`). Com o zip no cache, o `npm install` e o build nao precisam de rede para o Electron. Os binarios do NSIS/winCodeSign ficam em `%LOCALAPPDATA%\electron-builder\Cache` e podem ser copiados da mesma forma de uma maquina que ja gerou o build.
+
+### Icone
+
+Nenhum icone personalizado e fornecido: o electron-builder usa o icone padrao do Electron. Para um icone proprio, coloque um arquivo `build/icon.ico` (256x256) na raiz do projeto antes do build.
 
 ## Uso por 2-3 pessoas (pasta sincronizada)
 
@@ -62,10 +119,12 @@ Toda linha possui duas colunas de data/hora:
 Formato das datas/hora: `YYYY-MM-DD HH:mm:ss` (horario local).
 
 ### `materiais.csv`
-`id; nome; categoria; descricao; quantidade_total; observacoes; adicionado_em; alterado_em`
+`id; nome; descricao; quantidade_total; observacoes; cor; adicionado_em; alterado_em`
 
 ### `agencias.csv`
-`id; nome; contato; telefone; email; observacoes; adicionado_em; alterado_em`
+`id; codigo; nome; contato; telefone; email; observacoes; adicionado_em; alterado_em`
+
+- `codigo`: identificador numerico curto e unico da agencia (ex.: `01`, `02`, `103`). Os zeros a esquerda sao preservados (o valor e tratado como texto, nunca convertido para numero). Observacao: ao editar o CSV no Excel, ele pode remover zeros a esquerda; formate a coluna como **Texto** se for editar por la.
 
 ### `alugueis.csv`
 `id; id_material; id_agencia; quantidade; data_retirada; data_prevista_devolucao; data_devolucao; situacao; observacoes; adicionado_em; alterado_em`
@@ -81,6 +140,14 @@ Versoes anteriores usavam arquivos com nomes em ingles, separados por virgula e 
 Na primeira vez que o app abrir apos a atualizacao, se esses arquivos antigos existirem na pasta de dados, eles sao convertidos automaticamente para o novo formato (`materiais.csv`, `agencias.csv`, `alugueis.csv`): virgula vira ponto-e-virgula, os cabecalhos passam para portugues e as colunas `adicionado_em`/`alterado_em` sao adicionadas (em branco para os registros antigos, pois a data original e desconhecida).
 
 Os arquivos antigos **nao sao apagados** - ficam como backup e podem ser removidos manualmente depois que voce confirmar que a migracao deu certo. Em pasta compartilhada na nuvem, deixe um computador atualizar primeiro: ele cria os arquivos novos e os demais apenas recebem pela sincronizacao.
+
+### Atualizacao de colunas (codigo de agencia e remocao de categoria)
+
+Esta versao adiciona a coluna `codigo` em `agencias.csv` e remove a coluna `categoria` de `materiais.csv`. A atualizacao do cabecalho dos arquivos ja existentes (no formato novo) e feita automaticamente ao abrir o app, de forma segura:
+
+- A leitura tolera colunas faltando (viram vazio) e ignora colunas removidas, entao os dados continuam corretos imediatamente.
+- Quando o cabecalho difere do esquema atual, o app rele e regrava o arquivo com gravacao atomica (arquivo temporario + rename), **sem perder dados**. Salvar qualquer registro tambem atualiza o arquivo.
+- Para as agencias ja existentes, o `codigo` fica **em branco** ate que voce edite cada agencia e atribua um codigo (o campo e obrigatorio e unico na edicao). Na lista, agencias sem codigo aparecem com `-`.
 
 ## Estrutura do projeto
 

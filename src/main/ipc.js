@@ -56,6 +56,14 @@ function ensureAllFiles() {
   store.ensureFile(paths.materials, SCHEMAS.materials);
   store.ensureFile(paths.agencies, SCHEMAS.agencies);
   store.ensureFile(paths.rentals, SCHEMAS.rentals);
+  // Atualiza o cabecalho de arquivos ja existentes para o schema atual
+  // (ex.: adiciona "codigo" nas agencias, remove "categoria" dos materiais).
+  // So regrava quando o cabecalho realmente difere; nenhum dado e perdido.
+  let upgraded = false;
+  for (const key of Object.keys(paths)) {
+    if (store.reconcileSchema(paths[key], SCHEMAS[key])) upgraded = true;
+  }
+  if (upgraded) markSelfWrite();
   return paths;
 }
 
@@ -106,6 +114,7 @@ function buildSnapshot() {
     ...r,
     material_name: materialById.get(r.material_id)?.name || "(material removido)",
     agency_name: agencyById.get(r.agency_id)?.name || "(agencia removida)",
+    agency_code: agencyById.get(r.agency_id)?.code || "",
     overdue: isOverdue(r, today),
   }));
 
@@ -197,7 +206,10 @@ function validateAgency(data) {
   const errors = [];
   const name = String(data.name || "").trim();
   if (!name) errors.push("Nome e obrigatorio.");
-  return { errors, clean: { name } };
+  const code = String(data.code || "").trim();
+  if (!code) errors.push("Codigo e obrigatorio.");
+  else if (!/^\d+$/.test(code)) errors.push("Codigo deve conter apenas numeros (ex.: 01, 02, 03).");
+  return { errors, clean: { name, code } };
 }
 
 // ----------------------------- Handlers -------------------------------------
@@ -259,7 +271,6 @@ function registerIpc() {
       rows.push({
         id: store.newId(),
         name: clean.name,
-        category: String(data.category || "").trim(),
         description: String(data.description || "").trim(),
         total_quantity: clean.total,
         notes: String(data.notes || "").trim(),
@@ -300,7 +311,6 @@ function registerIpc() {
       rows[idx] = {
         ...rows[idx],
         name: clean.name,
-        category: String(data.category || "").trim(),
         description: String(data.description || "").trim(),
         total_quantity: clean.total,
         notes: String(data.notes || "").trim(),
@@ -337,9 +347,17 @@ function registerIpc() {
     const { errors, clean } = validateAgency(data);
     if (errors.length) return fail("VALIDATION", errors.join(" "));
 
+    let duplicate = false;
+
     await mutate("agencies", (rows) => {
+      // Codigo deve ser unico entre as agencias (ignora codigos em branco de registros legados).
+      if (rows.some((r) => String(r.code || "").trim() === clean.code)) {
+        duplicate = true;
+        return rows;
+      }
       rows.push({
         id: store.newId(),
+        code: clean.code,
         name: clean.name,
         contact_person: String(data.contact_person || "").trim(),
         phone: String(data.phone || "").trim(),
@@ -350,6 +368,8 @@ function registerIpc() {
       });
       return rows;
     });
+
+    if (duplicate) return fail("VALIDATION", `Codigo "${clean.code}" ja esta em uso por outra agencia.`);
     return done();
   });
 
@@ -359,6 +379,7 @@ function registerIpc() {
 
     let conflict = false;
     let notFound = false;
+    let duplicate = false;
 
     await mutate("agencies", (rows) => {
       const idx = rows.findIndex((r) => r.id === data.id);
@@ -370,8 +391,14 @@ function registerIpc() {
         conflict = true;
         return rows;
       }
+      // Codigo deve ser unico (ignora a propria agencia e codigos em branco legados).
+      if (rows.some((r) => r.id !== data.id && String(r.code || "").trim() === clean.code)) {
+        duplicate = true;
+        return rows;
+      }
       rows[idx] = {
         ...rows[idx],
+        code: clean.code,
         name: clean.name,
         contact_person: String(data.contact_person || "").trim(),
         phone: String(data.phone || "").trim(),
@@ -384,6 +411,7 @@ function registerIpc() {
 
     if (notFound) return fail("NOT_FOUND", "Agencia nao encontrada (pode ter sido removida).");
     if (conflict) return fail("CONFLICT", "Esta agencia foi alterada por outro usuario. Recarregue e tente novamente.");
+    if (duplicate) return fail("VALIDATION", `Codigo "${clean.code}" ja esta em uso por outra agencia.`);
     return done();
   });
 

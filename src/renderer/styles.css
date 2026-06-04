@@ -163,9 +163,23 @@ html, body {
   margin-bottom: 20px;
 }
 .panel h2 { margin: 0 0 14px; font-size: 16px; }
+.panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+.panel-head h2 { margin: 0; }
+.panel-head select { width: auto; min-width: 160px; }
 
 .toolbar { display: flex; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
 .toolbar input[type="search"] { flex: 1; min-width: 220px; }
+
+/* Barra de filtros (alugueis) */
+.filters { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+.filters-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.filters-row > input[type="search"] { flex: 1; min-width: 200px; }
+.filters-row > input[type="text"] { width: 160px; }
+.filters-row > select { width: auto; min-width: 160px; }
+.filter-range { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); margin-bottom: 0; font-weight: 500; }
+.filter-range input[type="date"] { width: auto; }
+.filter-check { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); margin-bottom: 0; font-weight: 500; }
+.filter-check input { width: auto; }
 
 .table-wrap {
   background: var(--surface);
@@ -353,6 +367,15 @@ label { display: block; font-size: 13px; margin-bottom: 5px; color: #334155; fon
   display: inline-block;
   font-weight: 700;
   margin-right: 3px;
+}
+.cal-chip-code {
+  display: inline-block;
+  font-weight: 700;
+  margin-right: 4px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: rgba(15, 23, 42, 0.08);
+  color: var(--text);
 }
 .cal-chip-flag.overdue { color: var(--danger); }
 .cal-more { font-size: 11px; color: var(--muted); padding: 1px 6px; }

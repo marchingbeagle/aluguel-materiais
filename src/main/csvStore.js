@@ -22,7 +22,6 @@ const SCHEMAS = {
   materials: [
     { key: "id", header: "id" },
     { key: "name", header: "nome" },
-    { key: "category", header: "categoria" },
     { key: "description", header: "descricao" },
     { key: "total_quantity", header: "quantidade_total" },
     { key: "notes", header: "observacoes" },
@@ -31,6 +30,7 @@ const SCHEMAS = {
   ],
   agencies: [
     { key: "id", header: "id" },
+    { key: "code", header: "codigo" },
     { key: "name", header: "nome" },
     { key: "contact_person", header: "contato" },
     { key: "phone", header: "telefone" },
@@ -57,7 +57,6 @@ const SCHEMAS = {
 const LEGACY_HEADER_TO_KEY = {
   id: "id",
   name: "name",
-  category: "category",
   description: "description",
   total_quantity: "total_quantity",
   notes: "notes",
@@ -228,6 +227,42 @@ function migrateLegacy(oldPath, newPath, schema) {
   return true;
 }
 
+// Le apenas a primeira linha (cabecalho) do arquivo, sem carregar tudo.
+function readHeaderLine(filePath) {
+  let raw;
+  try {
+    raw = fs.readFileSync(filePath, "utf8");
+  } catch (_err) {
+    return null;
+  }
+  raw = raw.replace(/^\uFEFF/, "");
+  const firstLine = raw.split(/\r?\n/, 1)[0] || "";
+  if (!firstLine.trim()) return [];
+  const parsed = Papa.parse(firstLine, { delimiter: DELIMITER });
+  const fields = Array.isArray(parsed.data) && parsed.data.length ? parsed.data[0] : [];
+  return fields.map((h) => String(h || "").trim());
+}
+
+// Reconcilia o cabecalho de um arquivo ja no formato novo com o schema atual.
+// Se faltarem colunas (ex.: "codigo") ou houver colunas removidas (ex.: "categoria"),
+// rele de forma tolerante e regrava com o schema novo. Nenhum dado e perdido:
+// colunas ausentes viram "" e colunas desconhecidas sao ignoradas.
+// Retorna true quando o arquivo foi reescrito.
+function reconcileSchema(filePath, schema) {
+  if (!fs.existsSync(filePath)) return false;
+  const existing = readHeaderLine(filePath);
+  if (existing === null) return false;
+
+  const expected = headersOf(schema);
+  const sameHeaders =
+    existing.length === expected.length && existing.every((h, i) => h === expected[i]);
+  if (sameHeaders) return false;
+
+  const rows = readAll(filePath, schema);
+  writeAll(filePath, schema, rows);
+  return true;
+}
+
 // Assinatura simples do estado do arquivo (mtime + tamanho) para detectar
 // mudancas externas sem reler todo o conteudo.
 function fileSignature(filePath) {
@@ -253,6 +288,7 @@ module.exports = {
   readAll,
   writeAll,
   migrateLegacy,
+  reconcileSchema,
   fileSignature,
   newId,
 };

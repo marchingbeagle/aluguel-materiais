@@ -31,6 +31,12 @@ function fmtDate(iso) {
   return `${d}/${m}/${y}`;
 }
 
+// Nome da agencia prefixado pelo codigo (quando existir), ex.: "01 - Agencia X".
+function agencyLabel(r) {
+  const code = String(r.agency_code || "").trim();
+  return code ? `${code} - ${r.agency_name}` : r.agency_name;
+}
+
 function toast(message, type = "info") {
   const el = document.createElement("div");
   el.className = `toast ${type}`;
@@ -165,11 +171,86 @@ function renderDashboard() {
     .map(
       (r) => `<tr>
         <td>${escapeHtml(r.material_name)}</td>
-        <td>${escapeHtml(r.agency_name)}</td>
+        <td>${escapeHtml(agencyLabel(r))}</td>
         <td>${escapeHtml(r.quantity)}</td>
         <td>${fmtDate(r.checkout_date)}</td>
         <td>${fmtDate(r.expected_return_date)}</td>
         <td>${r.overdue ? '<span class="badge badge-overdue">Atrasado</span>' : '<span class="badge badge-rented">No prazo</span>'}</td>
+      </tr>`
+    )
+    .join("");
+
+  renderTopAgencies();
+}
+
+// Data ISO de inicio (inclusiva) para o periodo escolhido no ranking.
+// Retorna "" quando o periodo for "todos" (sem limite inferior).
+function periodStartISO(period) {
+  const now = new Date();
+  if (period === "month") {
+    return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-01`;
+  }
+  if (period === "year") {
+    return `${now.getFullYear()}-01-01`;
+  }
+  if (period === "last30") {
+    const d = new Date(now);
+    d.setDate(d.getDate() - 29); // inclui hoje + 29 dias anteriores = 30 dias
+    return toISO(d);
+  }
+  return "";
+}
+
+// Ranking de agencias com mais reservas (alugueis), filtrado por periodo da
+// data de retirada. Agrupa por agencia, conta reservas e soma a quantidade.
+// Agencias removidas sao tratadas com seguranca (nome de fallback e codigo "-").
+function renderTopAgencies() {
+  const tbody = $("#top-agencies tbody");
+  if (!tbody) return;
+
+  const period = $("#topAgenciesPeriod")?.value || "month";
+  const fromIso = periodStartISO(period);
+
+  const groups = new Map();
+  for (const r of data.rentals) {
+    const checkout = r.checkout_date || "";
+    // Comparacao lexicografica de YYYY-MM-DD (ordem cronologica).
+    if (fromIso && (!checkout || checkout < fromIso)) continue;
+
+    const key = r.agency_id || `__sem_agencia__${r.agency_name}`;
+    let g = groups.get(key);
+    if (!g) {
+      g = {
+        code: String(r.agency_code || "").trim(),
+        name: r.agency_name || "(agencia removida)",
+        bookings: 0,
+        quantity: 0,
+      };
+      groups.set(key, g);
+    }
+    g.bookings += 1;
+    g.quantity += Number(r.quantity) || 0;
+  }
+
+  const rows = Array.from(groups.values()).sort(
+    (a, b) =>
+      b.bookings - a.bookings ||
+      b.quantity - a.quantity ||
+      a.name.localeCompare(b.name, "pt-BR")
+  );
+
+  if (!rows.length) {
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="4">Nenhuma reserva no periodo selecionado.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = rows
+    .map(
+      (g) => `<tr>
+        <td>${escapeHtml(g.code) || "-"}</td>
+        <td>${escapeHtml(g.name)}</td>
+        <td>${escapeHtml(g.bookings)}</td>
+        <td>${escapeHtml(g.quantity)}</td>
       </tr>`
     )
     .join("");
@@ -179,27 +260,16 @@ function renderDashboard() {
 
 function renderMaterials() {
   const term = $("#materialSearch").value.trim().toLowerCase();
-  const cat = $("#materialCategoryFilter").value;
-
-  const categories = [...new Set(data.materials.map((m) => m.category).filter(Boolean))].sort();
-  const sel = $("#materialCategoryFilter");
-  const prev = sel.value;
-  sel.innerHTML = '<option value="">Todas as categorias</option>' +
-    categories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
-  sel.value = categories.includes(prev) ? prev : "";
 
   const rows = data.materials.filter((m) => {
-    const matchTerm = !term ||
+    return !term ||
       m.name.toLowerCase().includes(term) ||
-      (m.category || "").toLowerCase().includes(term) ||
       (m.description || "").toLowerCase().includes(term);
-    const matchCat = !cat || m.category === cat;
-    return matchTerm && matchCat;
   });
 
   const tbody = $("#materials-table tbody");
   if (!rows.length) {
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="7">Nenhum material encontrado.</td></tr>`;
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="6">Nenhum material encontrado.</td></tr>`;
     return;
   }
   tbody.innerHTML = rows
@@ -211,7 +281,6 @@ function renderMaterials() {
       const swatchColor = m.color || DEFAULT_MATERIAL_COLOR;
       return `<tr>
         <td><span class="swatch" style="background:${escapeHtml(swatchColor)}" title="${escapeHtml(m.color ? swatchColor : "Cor padrao")}"></span>${escapeHtml(m.name)}</td>
-        <td>${escapeHtml(m.category) || "-"}</td>
         <td>${escapeHtml(m.total_quantity)}</td>
         <td>${escapeHtml(m.rented)}</td>
         <td>${availBadge}</td>
@@ -231,10 +300,6 @@ function materialFormHtml(m = {}) {
       <div class="field full">
         <label>Nome *</label>
         <input name="name" value="${escapeHtml(m.name)}" required />
-      </div>
-      <div class="field">
-        <label>Categoria</label>
-        <input name="category" value="${escapeHtml(m.category)}" placeholder="Ex.: Baloes, Banners, Brindes" />
       </div>
       <div class="field">
         <label>Quantidade total *</label>
@@ -300,6 +365,7 @@ function renderAgencies() {
   const rows = data.agencies.filter((a) => {
     return !term ||
       a.name.toLowerCase().includes(term) ||
+      (a.code || "").toLowerCase().includes(term) ||
       (a.contact_person || "").toLowerCase().includes(term) ||
       (a.email || "").toLowerCase().includes(term) ||
       (a.phone || "").toLowerCase().includes(term);
@@ -307,12 +373,13 @@ function renderAgencies() {
 
   const tbody = $("#agencies-table tbody");
   if (!rows.length) {
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="6">Nenhuma agencia encontrada.</td></tr>`;
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="7">Nenhuma agencia encontrada.</td></tr>`;
     return;
   }
   tbody.innerHTML = rows
     .map(
       (a) => `<tr>
+        <td>${escapeHtml(a.code) || "-"}</td>
         <td>${escapeHtml(a.name)}</td>
         <td>${escapeHtml(a.contact_person) || "-"}</td>
         <td>${escapeHtml(a.phone) || "-"}</td>
@@ -330,7 +397,11 @@ function renderAgencies() {
 function agencyFormHtml(a = {}) {
   return `
     <div class="form-grid">
-      <div class="field full">
+      <div class="field">
+        <label>Codigo *</label>
+        <input name="code" value="${escapeHtml(a.code)}" inputmode="numeric" pattern="\\d+" placeholder="Ex.: 01, 02, 03" required />
+      </div>
+      <div class="field">
         <label>Nome *</label>
         <input name="name" value="${escapeHtml(a.name)}" required />
       </div>
@@ -373,23 +444,70 @@ function openAgencyForm(agency) {
 
 // ----------------------------- Alugueis -----------------------------
 
+// Mantem as opcoes de um <select> sincronizadas com os dados, preservando a
+// selecao atual quando ainda for valida.
+function syncSelectOptions(sel, placeholder, items) {
+  const prev = sel.value;
+  const opts = items.map((it) => `<option value="${escapeHtml(it.value)}">${escapeHtml(it.label)}</option>`).join("");
+  sel.innerHTML = `<option value="">${escapeHtml(placeholder)}</option>` + opts;
+  sel.value = items.some((it) => String(it.value) === prev) ? prev : "";
+}
+
 function renderRentals() {
   const term = $("#rentalSearch").value.trim().toLowerCase();
-  const filter = $("#rentalStatusFilter").value;
+  const agencyId = $("#rentalAgencyFilter").value;
+  const agencyCode = $("#rentalAgencyCodeFilter").value.trim().toLowerCase();
+  const materialId = $("#rentalMaterialFilter").value;
+  const status = $("#rentalStatusFilter").value;
+  const checkoutFrom = $("#rentalCheckoutFrom").value;
+  const checkoutTo = $("#rentalCheckoutTo").value;
+  const returnFrom = $("#rentalReturnFrom").value;
+  const returnTo = $("#rentalReturnTo").value;
+  const overdueOnly = $("#rentalOverdueOnly").checked;
+
+  // Popula os selects de agencia e material a partir dos dados atuais.
+  syncSelectOptions(
+    $("#rentalAgencyFilter"),
+    "Todas as agencias",
+    data.agencies.map((a) => ({ value: a.id, label: a.code ? `[${a.code}] ${a.name}` : a.name }))
+  );
+  syncSelectOptions(
+    $("#rentalMaterialFilter"),
+    "Todos os materiais",
+    data.materials
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"))
+      .map((m) => ({ value: m.id, label: m.name }))
+  );
 
   const rows = data.rentals.filter((r) => {
     const matchTerm = !term ||
       r.material_name.toLowerCase().includes(term) ||
-      r.agency_name.toLowerCase().includes(term);
-    let matchFilter = true;
-    if (filter === "overdue") matchFilter = r.overdue;
-    else if (filter) matchFilter = r.status === filter;
-    return matchTerm && matchFilter;
+      r.agency_name.toLowerCase().includes(term) ||
+      String(r.agency_code || "").toLowerCase().includes(term);
+    if (!matchTerm) return false;
+
+    if (agencyId && r.agency_id !== agencyId) return false;
+    if (agencyCode && !String(r.agency_code || "").toLowerCase().includes(agencyCode)) return false;
+    if (materialId && r.material_id !== materialId) return false;
+
+    if (status === "overdue") { if (!r.overdue) return false; }
+    else if (status) { if (r.status !== status) return false; }
+
+    if (overdueOnly && !r.overdue) return false;
+
+    // Faixas de data (comparacao lexicografica de YYYY-MM-DD).
+    if (checkoutFrom && (!r.checkout_date || r.checkout_date < checkoutFrom)) return false;
+    if (checkoutTo && (!r.checkout_date || r.checkout_date > checkoutTo)) return false;
+    if (returnFrom && (!r.expected_return_date || r.expected_return_date < returnFrom)) return false;
+    if (returnTo && (!r.expected_return_date || r.expected_return_date > returnTo)) return false;
+
+    return true;
   });
 
   const tbody = $("#rentals-table tbody");
   if (!rows.length) {
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="8">Nenhum aluguel encontrado.</td></tr>`;
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="9">Nenhum aluguel encontrado.</td></tr>`;
     return;
   }
   tbody.innerHTML = rows
@@ -408,6 +526,7 @@ function renderRentals() {
            <button class="btn-link danger" data-del-rental="${r.id}">Excluir</button>`;
 
       return `<tr>
+        <td>${escapeHtml(r.agency_code) || "-"}</td>
         <td>${escapeHtml(r.material_name)}</td>
         <td>${escapeHtml(r.agency_name)}</td>
         <td>${escapeHtml(r.quantity)}</td>
@@ -419,6 +538,20 @@ function renderRentals() {
       </tr>`;
     })
     .join("");
+}
+
+function clearRentalFilters() {
+  $("#rentalSearch").value = "";
+  $("#rentalAgencyFilter").value = "";
+  $("#rentalAgencyCodeFilter").value = "";
+  $("#rentalMaterialFilter").value = "";
+  $("#rentalStatusFilter").value = "";
+  $("#rentalCheckoutFrom").value = "";
+  $("#rentalCheckoutTo").value = "";
+  $("#rentalReturnFrom").value = "";
+  $("#rentalReturnTo").value = "";
+  $("#rentalOverdueOnly").checked = false;
+  renderRentals();
 }
 
 function rentalFormHtml(r = {}) {
@@ -434,7 +567,8 @@ function rentalFormHtml(r = {}) {
   const agencyOptions = data.agencies
     .map((a) => {
       const sel = a.id === r.agency_id ? " selected" : "";
-      return `<option value="${a.id}"${sel}>${escapeHtml(a.name)}</option>`;
+      const label = a.code ? `[${a.code}] ${a.name}` : a.name;
+      return `<option value="${a.id}"${sel}>${escapeHtml(label)}</option>`;
     })
     .join("");
 
@@ -617,17 +751,20 @@ function renderCalendar() {
       const chips = evs
         .slice(0, maxChips)
         .map((r) => {
-          const tip = `${r.material_name} - ${r.agency_name} (${fmtDate(r.checkout_date)} ate ${fmtDate(
-            r.expected_return_date
-          )})`;
+          const codeStr = String(r.agency_code || "").trim();
+          const tip = `${codeStr ? `[${codeStr}] ` : ""}${r.agency_name} - ${r.material_name} (${fmtDate(
+            r.checkout_date
+          )} ate ${fmtDate(r.expected_return_date)})`;
           const color = materialColorOf(r.material_id);
           const style = `border-left-color:${color};background:${hexToRgba(color, 0.16)}`;
           const flag = r.overdue
             ? '<span class="cal-chip-flag overdue" title="Atrasado">!</span>'
             : "";
-          return `<div class="cal-chip ${chipClass(r)}" style="${style}" title="${escapeHtml(tip)}">${flag}${escapeHtml(
-            r.quantity
-          )}x ${escapeHtml(r.material_name)}</div>`;
+          const codeBadge = codeStr ? `<span class="cal-chip-code">${escapeHtml(codeStr)}</span>` : "";
+          // Prioridade: codigo da agencia, material e quantidade.
+          return `<div class="cal-chip ${chipClass(r)}" style="${style}" title="${escapeHtml(tip)}">${flag}${codeBadge}${escapeHtml(
+            r.material_name
+          )} ${escapeHtml(r.quantity)}x</div>`;
         })
         .join("");
       const more = evs.length > maxChips ? `<div class="cal-more">+${evs.length - maxChips} mais</div>` : "";
@@ -692,7 +829,7 @@ function openDayModal(iso) {
                 <span class="day-qty">${escapeHtml(r.quantity)}x</span>
                 ${statusBadge(r)}
               </div>
-              <div class="day-meta">${escapeHtml(r.agency_name)}</div>
+              <div class="day-meta">${escapeHtml(agencyLabel(r))}</div>
               <div class="day-dates">
                 <span>Retirada: <strong>${fmtDate(r.checkout_date)}</strong></span>
                 <span>Devolucao prevista: <strong>${fmtDate(r.expected_return_date)}</strong></span>
@@ -777,6 +914,9 @@ function bindEvents() {
   $("#refreshBtn").addEventListener("click", loadAll);
   $("#settingsBtn").addEventListener("click", () => switchView("settings"));
 
+  // Ranking de agencias no painel (recalcula ao trocar o periodo).
+  $("#topAgenciesPeriod").addEventListener("change", renderTopAgencies);
+
   // Modal
   $("#modalForm").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -808,10 +948,22 @@ function bindEvents() {
 
   // Busca / filtros
   $("#materialSearch").addEventListener("input", renderMaterials);
-  $("#materialCategoryFilter").addEventListener("change", renderMaterials);
   $("#agencySearch").addEventListener("input", renderAgencies);
-  $("#rentalSearch").addEventListener("input", renderRentals);
-  $("#rentalStatusFilter").addEventListener("change", renderRentals);
+  [
+    "#rentalSearch",
+    "#rentalAgencyCodeFilter",
+    "#rentalCheckoutFrom",
+    "#rentalCheckoutTo",
+    "#rentalReturnFrom",
+    "#rentalReturnTo",
+  ].forEach((sel) => $(sel).addEventListener("input", renderRentals));
+  [
+    "#rentalAgencyFilter",
+    "#rentalMaterialFilter",
+    "#rentalStatusFilter",
+    "#rentalOverdueOnly",
+  ].forEach((sel) => $(sel).addEventListener("change", renderRentals));
+  $("#rentalClearFilters").addEventListener("click", clearRentalFilters);
 
   // Calendario
   $("#calPrev").addEventListener("click", () => shiftCalendar(-1));

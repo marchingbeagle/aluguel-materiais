@@ -5,14 +5,44 @@
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
-    "dev": "electron . --enable-logging"
+    "dev": "electron . --enable-logging",
+    "build:portable": "electron-builder --win portable",
+    "build:exe": "electron-builder --win nsis",
+    "build:win": "electron-builder --win"
   },
   "author": "",
   "license": "MIT",
   "devDependencies": {
-    "electron": "^31.0.0"
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
   },
   "dependencies": {
     "papaparse": "^5.4.1"
+  },
+  "build": {
+    "appId": "com.cooperativa.aluguelmateriais",
+    "productName": "Aluguel de Materiais",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "portable",
+        "nsis"
+      ]
+    },
+    "portable": {
+      "artifactName": "AluguelDeMateriais-portable-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "AluguelDeMateriais-setup-${version}.${ext}"
+    }
   }
 }
