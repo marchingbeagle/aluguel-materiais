@@ -39,46 +39,154 @@
       <main class="content">
         <!-- PAINEL -->
         <section id="view-dashboard" class="view active">
-          <header class="view-header">
-            <h1>Painel</h1>
-            <p class="muted">Visao geral do estoque e dos alugueis.</p>
-          </header>
-          <div class="cards">
-            <div class="card"><span class="card-label">Materiais cadastrados</span><span class="card-value" id="stat-materials">0</span></div>
-            <div class="card"><span class="card-label">Unidades disponiveis</span><span class="card-value" id="stat-available">0</span></div>
-            <div class="card"><span class="card-label">Unidades alugadas</span><span class="card-value" id="stat-rented">0</span></div>
-            <div class="card card-warn"><span class="card-label">Devolucoes atrasadas</span><span class="card-value" id="stat-overdue">0</span></div>
-          </div>
-          <div class="panel">
-            <h2>Alugueis ativos</h2>
-            <div class="table-wrap">
-              <table id="dashboard-active">
-                <thead>
-                  <tr><th>Material</th><th>Agencia</th><th>Qtd</th><th>Retirada</th><th>Prev. devolucao</th><th>Situacao</th></tr>
-                </thead>
-                <tbody></tbody>
-              </table>
+          <header class="view-header dash-header">
+            <div>
+              <h1>Painel</h1>
+              <p class="muted" id="dashNarrative">Visao analitica de agencias e materiais.</p>
             </div>
-          </div>
-          <div class="panel">
-            <div class="panel-head">
-              <h2>Agencias com mais reservas</h2>
-              <select id="topAgenciesPeriod" aria-label="Periodo do ranking">
+          </header>
+
+          <!-- Barra de filtros global -->
+          <div class="filter-bar" id="dashFilters">
+            <div class="filter-group">
+              <label for="fltPreset">Periodo</label>
+              <select id="fltPreset">
                 <option value="month">Mes atual</option>
-                <option value="last30">Ultimos 30 dias</option>
+                <option value="last30" selected>Ultimos 30 dias</option>
+                <option value="last90">Ultimos 90 dias</option>
                 <option value="year">Ano atual</option>
-                <option value="all">Todos</option>
+                <option value="all">Todo o historico</option>
+                <option value="custom">Personalizado</option>
               </select>
             </div>
-            <div class="table-wrap">
-              <table id="top-agencies">
-                <thead>
-                  <tr><th>Codigo</th><th>Agencia</th><th>Reservas</th><th>Qtd. total</th></tr>
-                </thead>
-                <tbody></tbody>
-              </table>
+            <div class="filter-group filter-custom" id="fltCustomRange" hidden>
+              <label for="fltFrom">De</label>
+              <input type="date" id="fltFrom" />
+              <label for="fltTo">ate</label>
+              <input type="date" id="fltTo" />
+            </div>
+            <div class="filter-group">
+              <label for="fltAgency">Agencia</label>
+              <select id="fltAgency"><option value="">Todas</option></select>
+            </div>
+            <div class="filter-group">
+              <label for="fltMaterial">Material</label>
+              <select id="fltMaterial"><option value="">Todos</option></select>
+            </div>
+            <div class="filter-group">
+              <label for="fltSegment">Segmento</label>
+              <select id="fltSegment"><option value="">Todos</option></select>
+            </div>
+            <div class="filter-group">
+              <label for="fltStatus">Situacao</label>
+              <select id="fltStatus">
+                <option value="">Todas</option>
+                <option value="alugado">Alugados</option>
+                <option value="devolvido">Devolvidos</option>
+                <option value="overdue">Atrasados</option>
+              </select>
+            </div>
+            <button type="button" class="btn btn-sm btn-ghost" id="fltReset">Limpar filtros</button>
+            <span class="filter-period" id="fltPeriodLabel"></span>
+          </div>
+
+          <!-- KPIs -->
+          <div class="kpi-grid" id="kpiGrid"></div>
+
+          <!-- Insights e recomendacoes -->
+          <div class="panel panel-insights">
+            <div class="panel-head">
+              <h2>Insights e recomendacoes</h2>
+              <span class="muted small" id="insightsCount"></span>
+            </div>
+            <div class="insights-grid" id="insightsGrid"></div>
+          </div>
+
+          <!-- Tendencias -->
+          <div class="dash-row dash-row-2">
+            <div class="panel">
+              <div class="panel-head">
+                <h2>Alugueis ao longo do tempo</h2>
+                <span class="muted small">vs periodo anterior</span>
+              </div>
+              <div class="chart-box"><canvas id="chartRentals"></canvas></div>
+            </div>
+            <div class="panel">
+              <div class="panel-head">
+                <h2>Unidades em uso e atrasos</h2>
+              </div>
+              <div class="chart-box"><canvas id="chartUnits"></canvas></div>
             </div>
           </div>
+
+          <!-- Engajamento da base + sazonalidade -->
+          <div class="dash-row dash-row-2">
+            <div class="panel">
+              <div class="panel-head">
+                <h2>Engajamento das agencias</h2>
+                <span class="muted small">base atual</span>
+              </div>
+              <div id="engagement" class="funnel"></div>
+            </div>
+            <div class="panel">
+              <div class="panel-head">
+                <h2>Sazonalidade das reservas</h2>
+                <span class="muted small">dia x mes</span>
+              </div>
+              <div class="cohort-wrap"><div id="seasonality" class="cohort"></div></div>
+            </div>
+          </div>
+
+          <!-- Agencias com mais reservas + alugueis ativos -->
+          <div class="dash-row dash-row-2">
+            <div class="panel">
+              <div class="panel-head"><h2>Agencias com mais reservas</h2></div>
+              <div class="table-wrap table-scroll">
+                <table id="top-agencies">
+                  <thead>
+                    <tr><th>Codigo</th><th>Agencia</th><th>Reservas</th><th>Qtd. total</th></tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel-head">
+                <h2>Alugueis ativos</h2>
+                <span class="muted small" id="activeCount"></span>
+              </div>
+              <div class="table-wrap table-scroll">
+                <table id="dashboard-active">
+                  <thead>
+                    <tr><th>Material</th><th>Agencia</th><th>Qtd</th><th>Retirada</th><th>Prev. devolucao</th><th>Situacao</th></tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- Desempenho de materiais -->
+          <div class="dash-row dash-row-2">
+            <div class="panel">
+              <div class="panel-head"><h2>Demanda e utilizacao de materiais</h2></div>
+              <div class="chart-box"><canvas id="chartMaterials"></canvas></div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><h2>Oportunidades de estoque</h2></div>
+              <div class="opp-cols">
+                <div>
+                  <h3 class="opp-title">Capital parado (sem uso)</h3>
+                  <ul class="opp-list" id="idleList"></ul>
+                </div>
+                <div>
+                  <h3 class="opp-title">Perto da capacidade</h3>
+                  <ul class="opp-list" id="stockoutList"></ul>
+                </div>
+              </div>
+            </div>
+          </div>
+
         </section>
 
         <!-- MATERIAIS -->
@@ -259,6 +367,8 @@
 
     <div id="toasts" class="toasts"></div>
 
+    <script src="vendor/chart.umd.min.js"></script>
+    <script src="analytics.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

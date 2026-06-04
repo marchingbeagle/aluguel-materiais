@@ -151,23 +151,499 @@ function renderAll() {
   renderCalendar();
 }
 
-// ----------------------------- Painel -----------------------------
+// ----------------------------- Painel (analitico) -----------------------------
+
+// Estado dos filtros do painel.
+const dashFilters = {
+  preset: "last30",
+  from: "",
+  to: "",
+  agencyId: "",
+  materialId: "",
+  segment: "",
+  status: "",
+};
+
+// Instancias do Chart.js (recriadas a cada render para evitar vazamentos).
+const dashCharts = {};
+
+const fmtInt = (n) => Number(n || 0).toLocaleString("pt-BR");
+
+function chartReady() {
+  return typeof Chart !== "undefined";
+}
+
+function upsertChart(key, canvasId, config) {
+  if (!chartReady()) return;
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  if (dashCharts[key]) {
+    try {
+      dashCharts[key].destroy();
+    } catch (_e) {}
+  }
+  dashCharts[key] = new Chart(canvas.getContext("2d"), config);
+}
+
+function readDashFilters() {
+  dashFilters.preset = $("#fltPreset")?.value || "last30";
+  dashFilters.from = $("#fltFrom")?.value || "";
+  dashFilters.to = $("#fltTo")?.value || "";
+  dashFilters.agencyId = $("#fltAgency")?.value || "";
+  dashFilters.materialId = $("#fltMaterial")?.value || "";
+  dashFilters.segment = $("#fltSegment")?.value || "";
+  dashFilters.status = $("#fltStatus")?.value || "";
+}
+
+// Popula os selects de agencia/material mantendo a selecao atual.
+let dashSelectsSig = "";
+function populateDashSelects() {
+  const sig = `${data.agencies.length}:${data.materials.length}`;
+  if (sig === dashSelectsSig) return;
+  dashSelectsSig = sig;
+
+  const agSel = $("#fltAgency");
+  if (agSel) {
+    const cur = agSel.value;
+    agSel.innerHTML =
+      `<option value="">Todas</option>` +
+      data.agencies
+        .map((a) => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.code ? a.code + " - " : "")}${escapeHtml(a.name)}</option>`)
+        .join("");
+    agSel.value = cur;
+  }
+
+  const matSel = $("#fltMaterial");
+  if (matSel) {
+    const cur = matSel.value;
+    matSel.innerHTML =
+      `<option value="">Todos</option>` +
+      [...data.materials]
+        .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"))
+        .map((m) => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.name)}</option>`)
+        .join("");
+    matSel.value = cur;
+  }
+}
+
+function populateSegmentSelect(segments) {
+  const sel = $("#fltSegment");
+  if (!sel) return;
+  const cur = sel.value;
+  const defs = segments?.tierDefs || [];
+  sel.innerHTML =
+    `<option value="">Todos</option>` +
+    defs.map((t) => `<option value="${escapeHtml(t.name)}">${escapeHtml(t.name)}</option>`).join("");
+  sel.value = cur;
+}
 
 function renderDashboard() {
-  const s = data.stats || {};
-  $("#stat-materials").textContent = s.totalMaterials ?? 0;
-  $("#stat-available").textContent = s.availableUnits ?? 0;
-  $("#stat-rented").textContent = s.rentedUnits ?? 0;
-  $("#stat-overdue").textContent = s.overdueCount ?? 0;
+  if (!window.Analytics) return;
+  populateDashSelects();
+  readDashFilters();
 
-  const active = data.rentals.filter((r) => r.status === "alugado");
+  // Mostra/oculta o intervalo personalizado.
+  const custom = $("#fltCustomRange");
+  if (custom) custom.hidden = dashFilters.preset !== "custom";
+
+  const result = window.Analytics.compute(data, dashFilters);
+
+  populateSegmentSelect(result.segments);
+
+  $("#dashNarrative").textContent = result.narrative || "";
+  const lbl = $("#fltPeriodLabel");
+  if (lbl) lbl.textContent = `${fmtDate(result.period.from)} - ${fmtDate(result.period.to)}`;
+
+  renderKpis(result);
+  renderInsights(result);
+  renderTrendCharts(result);
+  renderEngagement(result);
+  renderSeasonality(result);
+  renderTopAgenciesTable(result);
+  renderMaterialPerf(result);
+  renderOpportunities(result);
+  renderActiveRentals(result);
+}
+
+// ----------------------------- KPIs -----------------------------
+
+// Mini grafico em SVG (sem dependencia) para os cartoes de KPI.
+function sparkline(values, color) {
+  const vals = (values || []).filter((v) => Number.isFinite(v));
+  if (vals.length < 2) return "";
+  const w = 120;
+  const h = 30;
+  const min = Math.min(...vals);
+  const max = Math.max(...vals);
+  const span = max - min || 1;
+  const step = w / (vals.length - 1);
+  const pts = vals
+    .map((v, i) => `${(i * step).toFixed(1)},${(h - 2 - ((v - min) / span) * (h - 4)).toFixed(1)}`)
+    .join(" ");
+  return `<svg class="kpi-spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">
+    <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+  </svg>`;
+}
+
+function deltaChip(d, { suffix = "", inverse = false } = {}) {
+  if (!d || d.prev === null || d.prev === undefined) {
+    return `<span class="kpi-sub">sem comparacao</span>`;
+  }
+  const arrow = d.dir === "up" ? "&#9650;" : d.dir === "down" ? "&#9660;" : "&#8211;";
+  const cls = `kpi-delta ${d.dir}${inverse ? " inverse" : ""}`;
+  let label;
+  if (d.pct === null) label = `${d.abs >= 0 ? "+" : ""}${fmtInt(Math.round(d.abs))}${suffix}`;
+  else label = `${d.pct >= 0 ? "+" : ""}${Math.round(d.pct)}%`;
+  return `<span class="${cls}">${arrow} ${label}</span><span class="kpi-sub">vs anterior</span>`;
+}
+
+function kpiCard({ label, value, delta, suffix = "", inverse = false, spark, sub }) {
+  return `<div class="kpi">
+    <span class="kpi-label">${escapeHtml(label)}</span>
+    <span class="kpi-value">${value}</span>
+    <div class="kpi-foot">${sub ? `<span class="kpi-sub">${escapeHtml(sub)}</span>` : deltaChip(delta, { suffix, inverse })}</div>
+    ${spark || ""}
+  </div>`;
+}
+
+function renderKpis(result) {
+  const k = result.kpis;
+  const grid = $("#kpiGrid");
+  if (!grid) return;
+  grid.innerHTML = [
+    kpiCard({
+      label: "Alugueis no periodo",
+      value: fmtInt(k.rentals.value),
+      delta: k.rentals,
+      spark: sparkline(k.sparks.rentals, "#41a812"),
+    }),
+    kpiCard({
+      label: "Unidades em uso",
+      value: fmtInt(k.unitsOut.value),
+      delta: k.unitsOut,
+      spark: sparkline(k.sparks.unitsOut, "#0ea5e9"),
+    }),
+    kpiCard({
+      label: "Agencias ativas",
+      value: fmtInt(k.activeAgencies.value),
+      delta: k.activeAgencies,
+      spark: sparkline(k.sparks.activeAgencies, "#8b5cf6"),
+    }),
+    kpiCard({
+      label: "Taxa de atraso",
+      value: `${k.overdueRate.value}%`,
+      delta: k.overdueRate,
+      inverse: true,
+      spark: sparkline(k.sparks.overdue, "#f59e0b"),
+    }),
+    kpiCard({
+      label: "Duracao media",
+      value: `${k.avgDuration.value} d`,
+      delta: k.avgDuration,
+      suffix: " d",
+      inverse: true,
+    }),
+  ].join("");
+}
+
+// ----------------------------- Insights -----------------------------
+
+function renderInsights(result) {
+  const grid = $("#insightsGrid");
+  if (!grid) return;
+  const items = result.insights || [];
+  $("#insightsCount").textContent = items.length ? `${items.length} alerta(s)` : "";
+  grid.innerHTML = items
+    .map(
+      (it) => `<div class="insight ${escapeHtml(it.type || "info")}">
+        <span class="insight-title">${escapeHtml(it.title)}</span>
+        <span class="insight-text">${escapeHtml(it.text)}</span>
+        ${it.target ? `<button type="button" class="btn btn-sm btn-ghost insight-action" data-insight="${escapeHtml(it.target)}">${escapeHtml(it.action || "Ver")}</button>` : ""}
+      </div>`
+    )
+    .join("");
+}
+
+// ----------------------------- Graficos de tendencia -----------------------------
+
+function renderTrendCharts(result) {
+  if (!chartReady()) return;
+  const t = result.trends;
+
+  const rentalDatasets = [
+    {
+      label: "Alugueis",
+      data: t.rentals,
+      borderColor: "#41a812",
+      backgroundColor: "rgba(65, 168, 18, 0.15)",
+      fill: true,
+      tension: 0.3,
+      pointRadius: 2,
+    },
+  ];
+  if (t.prevRentals) {
+    rentalDatasets.push({
+      label: "Periodo anterior",
+      data: t.prevRentals,
+      borderColor: "#9ca3af",
+      borderDash: [5, 4],
+      fill: false,
+      tension: 0.3,
+      pointRadius: 0,
+    });
+  }
+  upsertChart("rentals", "chartRentals", {
+    type: "line",
+    data: { labels: t.labels, datasets: rentalDatasets },
+    options: baseChartOptions(),
+  });
+
+  upsertChart("units", "chartUnits", {
+    type: "bar",
+    data: {
+      labels: t.labels,
+      datasets: [
+        {
+          type: "bar",
+          label: "Unidades em uso",
+          data: t.unitsOut,
+          backgroundColor: "rgba(14, 165, 233, 0.45)",
+          borderRadius: 4,
+          yAxisID: "y",
+        },
+        {
+          type: "line",
+          label: "Taxa de atraso (%)",
+          data: t.overdueRate,
+          borderColor: "#f59e0b",
+          backgroundColor: "#f59e0b",
+          tension: 0.3,
+          pointRadius: 2,
+          yAxisID: "y1",
+        },
+      ],
+    },
+    options: {
+      ...baseChartOptions(),
+      scales: {
+        y: { beginAtZero: true, ticks: { precision: 0 } },
+        y1: {
+          beginAtZero: true,
+          position: "right",
+          grid: { drawOnChartArea: false },
+          ticks: { callback: (v) => v + "%" },
+          max: 100,
+        },
+      },
+    },
+  });
+}
+
+function baseChartOptions() {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { mode: "index", intersect: false },
+    plugins: {
+      legend: { display: true, labels: { boxWidth: 12, font: { size: 11 } } },
+      tooltip: { enabled: true },
+    },
+    scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+  };
+}
+
+// ----------------------------- Engajamento da base -----------------------------
+
+function renderEngagement(result) {
+  const el = $("#engagement");
+  if (!el) return;
+  const eng = result.engagement || { total: 0, items: [] };
+  if (!eng.total) {
+    el.innerHTML = `<p class="opp-empty">Nenhuma agencia cadastrada.</p>`;
+    return;
+  }
+  const max = Math.max(...eng.items.map((i) => i.value), 1);
+  el.innerHTML =
+    `<p class="eng-total">${fmtInt(eng.total)} agencias cadastradas</p>` +
+    eng.items
+      .map(
+        (i) => `<div class="funnel-step">
+        <div class="funnel-meta">
+          <span class="funnel-name"><span class="seg-swatch" style="background:${i.color}"></span> ${escapeHtml(i.label)}</span>
+          <span class="funnel-val">${fmtInt(i.value)} (${i.pct}%)</span>
+        </div>
+        <div class="funnel-track"><div class="funnel-fill" style="width:${Math.max(2, Math.round((i.value / max) * 100))}%;background:${i.color}"></div></div>
+      </div>`
+      )
+      .join("");
+}
+
+// ----------------------------- Sazonalidade (heatmap) -----------------------------
+
+function heatColor(intensity) {
+  if (!intensity) return "#f1f5f0";
+  const t = Math.min(1, intensity);
+  const light = [232, 245, 224];
+  const dark = [50, 135, 13];
+  const mix = light.map((l, i) => Math.round(l + (dark[i] - l) * t));
+  return `rgb(${mix[0]}, ${mix[1]}, ${mix[2]})`;
+}
+
+function renderSeasonality(result) {
+  const el = $("#seasonality");
+  if (!el) return;
+  const s = result.seasonality || { weekdays: [], months: [], grid: [], max: 0, total: 0 };
+  if (!s.total) {
+    el.innerHTML = `<p class="opp-empty">Sem reservas para analisar sazonalidade.</p>`;
+    el.style.gridTemplateColumns = "";
+    return;
+  }
+  el.style.gridTemplateColumns = `40px repeat(${s.months.length}, 1fr)`;
+
+  const header = [`<div class="cohort-cell cohort-head"></div>`];
+  for (const m of s.months) header.push(`<div class="cohort-cell cohort-head">${escapeHtml(m)}</div>`);
+
+  const body = s.weekdays
+    .map((wd, wi) => {
+      const cells = [`<div class="cohort-cell cohort-label">${escapeHtml(wd)}</div>`];
+      for (let mi = 0; mi < s.months.length; mi++) {
+        const v = s.grid[wi][mi];
+        const intensity = s.max ? v / s.max : 0;
+        const fg = intensity >= 0.55 ? "#fff" : "var(--text)";
+        cells.push(
+          `<div class="cohort-cell" title="${escapeHtml(wd)} / ${escapeHtml(s.months[mi])}: ${v}" style="background:${heatColor(intensity)};color:${fg}">${v || ""}</div>`
+        );
+      }
+      return cells.join("");
+    })
+    .join("");
+
+  el.innerHTML = header.join("") + body;
+}
+
+function destroyChart(key) {
+  if (dashCharts[key]) {
+    try {
+      dashCharts[key].destroy();
+    } catch (_e) {}
+    delete dashCharts[key];
+  }
+}
+
+// ----------------------------- Top agencias -----------------------------
+
+function renderTopAgenciesTable(result) {
+  const tbody = $("#top-agencies tbody");
+  if (!tbody) return;
+  const rows = result.topAgencies || [];
+  if (!rows.length) {
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="4">Nenhuma reserva no periodo selecionado.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = rows
+    .map(
+      (g) => `<tr>
+        <td>${escapeHtml(g.code) || "-"}</td>
+        <td>${escapeHtml(g.name)}</td>
+        <td>${fmtInt(g.bookings)}</td>
+        <td>${fmtInt(g.quantity)}</td>
+      </tr>`
+    )
+    .join("");
+}
+
+// ----------------------------- Materiais -----------------------------
+
+function renderMaterialPerf(result) {
+  if (!chartReady()) return;
+  const ranking = (result.materials?.ranking || []).filter((m) => m.units > 0 || m.bookings > 0).slice(0, 10);
+  if (!ranking.length) {
+    destroyChart("materials");
+    return;
+  }
+  const colors = ranking.map((m) => m.color || "#41a812");
+  upsertChart("materials", "chartMaterials", {
+    type: "bar",
+    data: {
+      labels: ranking.map((m) => m.name),
+      datasets: [
+        {
+          label: "Unidades alugadas",
+          data: ranking.map((m) => m.units),
+          backgroundColor: colors,
+          borderRadius: 4,
+        },
+      ],
+    },
+    options: {
+      indexAxis: "y",
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            afterLabel: (ctx) => {
+              const m = ranking[ctx.dataIndex];
+              return `Utilizacao: ${m.utilizationPct}%  |  Reservas: ${m.bookings}`;
+            },
+          },
+        },
+      },
+      scales: { x: { beginAtZero: true, ticks: { precision: 0 } } },
+    },
+  });
+}
+
+function renderOpportunities(result) {
+  const idleEl = $("#idleList");
+  const stockEl = $("#stockoutList");
+  const idle = result.materials?.idle || [];
+  const stock = result.materials?.stockoutRisk || [];
+
+  if (idleEl) {
+    idleEl.innerHTML = idle.length
+      ? idle
+          .slice(0, 6)
+          .map(
+            (m) => `<li class="opp-item">
+              <span class="opp-swatch" style="background:${m.color || "#cbd5e1"}"></span>
+              <span class="opp-name">${escapeHtml(m.name)}</span>
+              <span class="opp-val">${fmtInt(m.total)} un. em estoque</span>
+            </li>`
+          )
+          .join("")
+      : `<li class="opp-empty">Nenhum material ocioso no periodo.</li>`;
+  }
+
+  if (stockEl) {
+    stockEl.innerHTML = stock.length
+      ? stock
+          .slice(0, 6)
+          .map(
+            (m) => `<li class="opp-item">
+              <span class="opp-swatch" style="background:${m.color || "#cbd5e1"}"></span>
+              <span class="opp-name">${escapeHtml(m.name)}</span>
+              <span class="opp-val">${m.utilizationPct}% de uso</span>
+            </li>`
+          )
+          .join("")
+      : `<li class="opp-empty">Nenhum material perto da capacidade.</li>`;
+  }
+}
+
+// ----------------------------- Operacional -----------------------------
+
+function renderActiveRentals(result) {
   const tbody = $("#dashboard-active tbody");
+  if (!tbody) return;
+  const active = result.ops?.activeRentals || [];
+  $("#activeCount").textContent = active.length ? `${fmtInt(active.length)} ativo(s)` : "";
   if (!active.length) {
     tbody.innerHTML = `<tr class="empty-row"><td colspan="6">Nenhum aluguel ativo.</td></tr>`;
     return;
   }
   tbody.innerHTML = active
-    .sort((a, b) => (a.expected_return_date || "").localeCompare(b.expected_return_date || ""))
     .map(
       (r) => `<tr>
         <td>${escapeHtml(r.material_name)}</td>
@@ -179,81 +655,34 @@ function renderDashboard() {
       </tr>`
     )
     .join("");
-
-  renderTopAgencies();
 }
 
-// Data ISO de inicio (inclusiva) para o periodo escolhido no ranking.
-// Retorna "" quando o periodo for "todos" (sem limite inferior).
-function periodStartISO(period) {
-  const now = new Date();
-  if (period === "month") {
-    return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-01`;
-  }
-  if (period === "year") {
-    return `${now.getFullYear()}-01-01`;
-  }
-  if (period === "last30") {
-    const d = new Date(now);
-    d.setDate(d.getDate() - 29); // inclui hoje + 29 dias anteriores = 30 dias
-    return toISO(d);
-  }
-  return "";
+// ----------------------------- Filtros / interacoes do painel -----------------------------
+
+function resetDashFilters() {
+  $("#fltPreset").value = "last30";
+  $("#fltFrom").value = "";
+  $("#fltTo").value = "";
+  $("#fltAgency").value = "";
+  $("#fltMaterial").value = "";
+  $("#fltSegment").value = "";
+  $("#fltStatus").value = "";
+  renderDashboard();
 }
 
-// Ranking de agencias com mais reservas (alugueis), filtrado por periodo da
-// data de retirada. Agrupa por agencia, conta reservas e soma a quantidade.
-// Agencias removidas sao tratadas com seguranca (nome de fallback e codigo "-").
-function renderTopAgencies() {
-  const tbody = $("#top-agencies tbody");
-  if (!tbody) return;
-
-  const period = $("#topAgenciesPeriod")?.value || "month";
-  const fromIso = periodStartISO(period);
-
-  const groups = new Map();
-  for (const r of data.rentals) {
-    const checkout = r.checkout_date || "";
-    // Comparacao lexicografica de YYYY-MM-DD (ordem cronologica).
-    if (fromIso && (!checkout || checkout < fromIso)) continue;
-
-    const key = r.agency_id || `__sem_agencia__${r.agency_name}`;
-    let g = groups.get(key);
-    if (!g) {
-      g = {
-        code: String(r.agency_code || "").trim(),
-        name: r.agency_name || "(agencia removida)",
-        bookings: 0,
-        quantity: 0,
-      };
-      groups.set(key, g);
+// Acoes dos cartoes de insight: leva o usuario ao contexto relevante.
+function handleInsightAction(target) {
+  if (target === "materials") {
+    switchView("materials");
+  } else if (target === "overdue") {
+    switchView("rentals");
+    const sel = $("#rentalStatusFilter");
+    if (sel) {
+      sel.value = "overdue";
+      renderRentals();
     }
-    g.bookings += 1;
-    g.quantity += Number(r.quantity) || 0;
   }
-
-  const rows = Array.from(groups.values()).sort(
-    (a, b) =>
-      b.bookings - a.bookings ||
-      b.quantity - a.quantity ||
-      a.name.localeCompare(b.name, "pt-BR")
-  );
-
-  if (!rows.length) {
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="4">Nenhuma reserva no periodo selecionado.</td></tr>`;
-    return;
-  }
-
-  tbody.innerHTML = rows
-    .map(
-      (g) => `<tr>
-        <td>${escapeHtml(g.code) || "-"}</td>
-        <td>${escapeHtml(g.name)}</td>
-        <td>${escapeHtml(g.bookings)}</td>
-        <td>${escapeHtml(g.quantity)}</td>
-      </tr>`
-    )
-    .join("");
+  // churn e segments ja estao visiveis no proprio painel.
 }
 
 // ----------------------------- Materiais -----------------------------
@@ -914,8 +1343,24 @@ function bindEvents() {
   $("#refreshBtn").addEventListener("click", loadAll);
   $("#settingsBtn").addEventListener("click", () => switchView("settings"));
 
-  // Ranking de agencias no painel (recalcula ao trocar o periodo).
-  $("#topAgenciesPeriod").addEventListener("change", renderTopAgencies);
+  // Filtros do painel analitico (recalcula todo o painel ao mudar).
+  [
+    "#fltPreset",
+    "#fltFrom",
+    "#fltTo",
+    "#fltAgency",
+    "#fltMaterial",
+    "#fltSegment",
+    "#fltStatus",
+  ].forEach((sel) => {
+    const el = $(sel);
+    if (el) el.addEventListener("change", renderDashboard);
+  });
+  $("#fltReset")?.addEventListener("click", resetDashFilters);
+  $("#insightsGrid")?.addEventListener("click", (e) => {
+    const btn = e.target.closest?.("[data-insight]");
+    if (btn) handleInsightAction(btn.getAttribute("data-insight"));
+  });
 
   // Modal
   $("#modalForm").addEventListener("submit", async (e) => {

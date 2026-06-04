@@ -6,7 +6,15 @@ Os dados ficam em arquivos **CSV** que podem ser abertos e editados no Excel. Na
 
 ## Recursos
 
-- **Painel**: total de materiais, unidades disponiveis, unidades alugadas e devolucoes atrasadas, a lista de alugueis ativos e o ranking de **agencias com mais reservas** (com codigo, nome, total de reservas e quantidade total), filtravel por periodo (mes atual, ultimos 30 dias, ano atual ou todos).
+- **Painel**: dashboard analitico orientado a decisao. As **agencias** sao tratadas como os "usuarios" e os **materiais** como o "produto". Inclui:
+  - **Barra de filtros global** (afeta todo o painel): periodo (mes atual, ultimos 30/90 dias, ano atual, todo o historico ou intervalo personalizado), agencia, material, **segmento** de agencia e situacao, com botao para limpar.
+  - **KPIs com comparacao** vs o periodo anterior (variacao % e mini-grafico): alugueis, unidades em uso, agencias ativas, taxa de atraso e duracao media.
+  - **Insights e recomendacoes** gerados automaticamente (risco de churn, capital parado, materiais perto da capacidade, surto de atrasos) e **deteccao de anomalias** (picos/quedas semanais), alem de uma frase-resumo do que mudou.
+  - **Tendencias**: alugueis ao longo do tempo (com sobreposicao do periodo anterior) e unidades em uso x taxa de atraso.
+  - **Engajamento das agencias**: distribuicao da base fixa entre ativas no periodo, ativas recentemente, dormentes (>90 dias) e que nunca alugaram. **Sazonalidade das reservas**: mapa de calor por dia da semana x mes, util para planejar picos de eventos.
+  - Ranking de **agencias com mais reservas** e lista de **alugueis ativos**.
+  - **Desempenho de materiais**: demanda/utilizacao e listas de oportunidade (capital parado e itens perto da capacidade).
+  - Os graficos usam a biblioteca **Chart.js** embarcada localmente (`src/renderer/vendor/`), sem necessidade de internet.
 - **Materiais**: cadastro, edicao, exclusao e busca por nome/descricao. Calcula automaticamente a quantidade disponivel.
 - **Agencias**: cadastro, edicao, exclusao e busca. Cada agencia tem um **codigo** numerico unico (ex.: `01`, `02`, `03`), exibido nas listas, formularios e no calendario.
 - **Alugueis**: registrar retirada (material, agencia, quantidade, datas), impedir alugar mais do que o disponivel e marcar devolucao. Filtros por agencia, codigo da agencia, material, situacao, faixas de data (retirada e devolucao prevista) e somente atrasados, com botao para limpar os filtros.
@@ -167,7 +175,10 @@ aluguel-materiais/
     renderer/
       index.html     # layout, navegacao, modais
       styles.css     # tema admin
-      app.js         # telas, tabelas, formularios, validacao
+      app.js         # telas, tabelas, formularios, validacao, render do painel
+      analytics.js   # funcoes puras de analise do painel (KPIs, cohorts, segmentos, etc.)
+      vendor/
+        chart.umd.min.js  # Chart.js embarcado (graficos do painel, offline)
 ```
 
 ## Premissas
