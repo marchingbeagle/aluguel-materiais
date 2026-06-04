@@ -259,24 +259,12 @@
     const materialById = new Map(materials.map((m) => [m.id, m]));
     const agencyById = new Map(agencies.map((a) => [a.id, a]));
 
-    // Filtros de agencia/material/situacao (sem o segmento, que e derivado).
-    const matchingBase = applyEntityFilters(allRentals, filters);
+    const matching = applyEntityFilters(allRentals, filters);
 
-    // ----- Perfis + segmentos (base; usados pelo filtro e pelos insights) -----
-    const profilesAll = computeAgencyProfiles(matchingBase, agencies, agencyById, today);
+    // ----- Perfis + segmentos (usados apenas pelos insights) -----
+    const profilesAll = computeAgencyProfiles(matching, agencies, agencyById, today);
     const segments = computeSegments(profilesAll);
-
-    // O filtro de segmento e aplicado depois da classificacao: restringe as
-    // demais metricas as agencias do segmento escolhido.
-    let matching = matchingBase;
-    let profiles = segments.agencies;
-    if (filters.segment) {
-      const allowed = new Set(
-        segments.agencies.filter((p) => p.tier === filters.segment).map((p) => p.id)
-      );
-      matching = matchingBase.filter((r) => allowed.has(r.agency_id));
-      profiles = segments.agencies.filter((p) => allowed.has(p.id));
-    }
+    const profiles = segments.agencies;
 
     // ----- Conjuntos por janela -----
     const inPeriod = matching.filter((r) => inRange(r.checkout_date, period.from, period.to));

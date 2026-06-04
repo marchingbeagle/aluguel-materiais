@@ -74,10 +74,6 @@
               <select id="fltMaterial"><option value="">Todos</option></select>
             </div>
             <div class="filter-group">
-              <label for="fltSegment">Segmento</label>
-              <select id="fltSegment"><option value="">Todos</option></select>
-            </div>
-            <div class="filter-group">
               <label for="fltStatus">Situacao</label>
               <select id="fltStatus">
                 <option value="">Todas</option>
@@ -167,24 +163,9 @@
           </div>
 
           <!-- Desempenho de materiais -->
-          <div class="dash-row dash-row-2">
-            <div class="panel">
-              <div class="panel-head"><h2>Demanda e utilizacao de materiais</h2></div>
-              <div class="chart-box"><canvas id="chartMaterials"></canvas></div>
-            </div>
-            <div class="panel">
-              <div class="panel-head"><h2>Oportunidades de estoque</h2></div>
-              <div class="opp-cols">
-                <div>
-                  <h3 class="opp-title">Capital parado (sem uso)</h3>
-                  <ul class="opp-list" id="idleList"></ul>
-                </div>
-                <div>
-                  <h3 class="opp-title">Perto da capacidade</h3>
-                  <ul class="opp-list" id="stockoutList"></ul>
-                </div>
-              </div>
-            </div>
+          <div class="panel">
+            <div class="panel-head"><h2>Demanda e utilizacao de materiais</h2></div>
+            <div class="chart-box"><canvas id="chartMaterials"></canvas></div>
           </div>
 
         </section>

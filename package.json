@@ -4,8 +4,9 @@
   "description": "Controle de aluguel/emprestimo de materiais de comunicacao e brindes para cooperativa. Banco de dados em CSV, sem servidor externo.",
   "main": "src/main/main.js",
   "scripts": {
-    "start": "electron .",
-    "dev": "electron . --enable-logging",
+    "test": "jest --runInBand",
+    "start": "npm test && electron .",
+    "dev": "npm test && electron . --enable-logging",
     "build:portable": "electron-builder --win portable",
     "build:exe": "electron-builder --win nsis",
     "build:win": "electron-builder --win"
@@ -14,7 +15,8 @@
   "license": "MIT",
   "devDependencies": {
     "electron": "^31.0.0",
-    "electron-builder": "^24.13.3"
+    "electron-builder": "^24.13.3",
+    "jest": "^30.4.2"
   },
   "dependencies": {
     "papaparse": "^5.4.1"

@@ -160,7 +160,6 @@ const dashFilters = {
   to: "",
   agencyId: "",
   materialId: "",
-  segment: "",
   status: "",
 };
 
@@ -191,7 +190,6 @@ function readDashFilters() {
   dashFilters.to = $("#fltTo")?.value || "";
   dashFilters.agencyId = $("#fltAgency")?.value || "";
   dashFilters.materialId = $("#fltMaterial")?.value || "";
-  dashFilters.segment = $("#fltSegment")?.value || "";
   dashFilters.status = $("#fltStatus")?.value || "";
 }
 
@@ -226,17 +224,6 @@ function populateDashSelects() {
   }
 }
 
-function populateSegmentSelect(segments) {
-  const sel = $("#fltSegment");
-  if (!sel) return;
-  const cur = sel.value;
-  const defs = segments?.tierDefs || [];
-  sel.innerHTML =
-    `<option value="">Todos</option>` +
-    defs.map((t) => `<option value="${escapeHtml(t.name)}">${escapeHtml(t.name)}</option>`).join("");
-  sel.value = cur;
-}
-
 function renderDashboard() {
   if (!window.Analytics) return;
   populateDashSelects();
@@ -247,8 +234,6 @@ function renderDashboard() {
   if (custom) custom.hidden = dashFilters.preset !== "custom";
 
   const result = window.Analytics.compute(data, dashFilters);
-
-  populateSegmentSelect(result.segments);
 
   $("#dashNarrative").textContent = result.narrative || "";
   const lbl = $("#fltPeriodLabel");
@@ -261,7 +246,6 @@ function renderDashboard() {
   renderSeasonality(result);
   renderTopAgenciesTable(result);
   renderMaterialPerf(result);
-  renderOpportunities(result);
   renderActiveRentals(result);
 }
 
@@ -595,43 +579,6 @@ function renderMaterialPerf(result) {
   });
 }
 
-function renderOpportunities(result) {
-  const idleEl = $("#idleList");
-  const stockEl = $("#stockoutList");
-  const idle = result.materials?.idle || [];
-  const stock = result.materials?.stockoutRisk || [];
-
-  if (idleEl) {
-    idleEl.innerHTML = idle.length
-      ? idle
-          .slice(0, 6)
-          .map(
-            (m) => `<li class="opp-item">
-              <span class="opp-swatch" style="background:${m.color || "#cbd5e1"}"></span>
-              <span class="opp-name">${escapeHtml(m.name)}</span>
-              <span class="opp-val">${fmtInt(m.total)} un. em estoque</span>
-            </li>`
-          )
-          .join("")
-      : `<li class="opp-empty">Nenhum material ocioso no periodo.</li>`;
-  }
-
-  if (stockEl) {
-    stockEl.innerHTML = stock.length
-      ? stock
-          .slice(0, 6)
-          .map(
-            (m) => `<li class="opp-item">
-              <span class="opp-swatch" style="background:${m.color || "#cbd5e1"}"></span>
-              <span class="opp-name">${escapeHtml(m.name)}</span>
-              <span class="opp-val">${m.utilizationPct}% de uso</span>
-            </li>`
-          )
-          .join("")
-      : `<li class="opp-empty">Nenhum material perto da capacidade.</li>`;
-  }
-}
-
 // ----------------------------- Operacional -----------------------------
 
 function renderActiveRentals(result) {
@@ -665,7 +612,6 @@ function resetDashFilters() {
   $("#fltTo").value = "";
   $("#fltAgency").value = "";
   $("#fltMaterial").value = "";
-  $("#fltSegment").value = "";
   $("#fltStatus").value = "";
   renderDashboard();
 }
@@ -1350,7 +1296,6 @@ function bindEvents() {
     "#fltTo",
     "#fltAgency",
     "#fltMaterial",
-    "#fltSegment",
     "#fltStatus",
   ].forEach((sel) => {
     const el = $(sel);
