@@ -157,3 +157,46 @@ describe("availability.peakReserved", () => {
     expect(availability.peakReserved(rentals, "m1", "2026-06-01", "2026-06-10", null)).toBe(0);
   });
 });
+
+describe("availability.occupancyFromItems (modelo cabecalho + itens)", () => {
+  const HEADERS = [
+    { id: "r1", checkout_date: "2026-06-01", expected_return_date: "2026-06-10" },
+    { id: "r2", checkout_date: "2026-06-05", expected_return_date: "2026-06-15" },
+  ];
+  const ITEMS = [
+    { id: "i1", rental_id: "r1", material_id: "m1", quantity: 2, status: "alugado" },
+    { id: "i2", rental_id: "r1", material_id: "m2", quantity: 1, status: "devolvido" },
+    { id: "i3", rental_id: "r2", material_id: "m1", quantity: 3, status: "alugado" },
+    { id: "i4", rental_id: "orfao", material_id: "m1", quantity: 9, status: "alugado" },
+  ];
+
+  test("gera uma linha por item com as datas herdadas do cabecalho", () => {
+    const rows = availability.occupancyFromItems(HEADERS, ITEMS, null);
+    expect(rows).toHaveLength(3); // o item orfao e descartado
+    expect(rows[0]).toEqual({
+      id: "i1",
+      material_id: "m1",
+      quantity: 2,
+      status: "alugado",
+      checkout_date: "2026-06-01",
+      expected_return_date: "2026-06-10",
+    });
+  });
+
+  test("itens de varios alugueis somam ocupacao no mesmo material", () => {
+    const rows = availability.occupancyFromItems(HEADERS, ITEMS, null);
+    // Pico de m1 no periodo 5-10: 2 (r1) + 3 (r2) = 5.
+    expect(availability.availabilityForPeriod(10, rows, "m1", "2026-06-05", "2026-06-10", null)).toBe(5);
+  });
+
+  test("excludeRentalId remove TODOS os itens do aluguel em edicao", () => {
+    const rows = availability.occupancyFromItems(HEADERS, ITEMS, "r1");
+    expect(rows.every((row) => row.id !== "i1" && row.id !== "i2")).toBe(true);
+    expect(availability.availabilityForPeriod(10, rows, "m1", "2026-06-05", "2026-06-10", null)).toBe(7);
+  });
+
+  test("itens devolvidos seguem para as linhas mas nao ocupam (status filtrado adiante)", () => {
+    const rows = availability.occupancyFromItems(HEADERS, ITEMS, null);
+    expect(availability.availabilityForPeriod(10, rows, "m2", "2026-06-01", "2026-06-10", null)).toBe(10);
+  });
+});

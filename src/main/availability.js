@@ -77,6 +77,32 @@ function availabilityForPeriod(totalQuantity, rentals, materialId, checkout, exp
   return total - peak;
 }
 
+// Converte o modelo novo (cabecalho do aluguel + itens) nas "linhas de
+// ocupacao" planas que as funcoes acima consomem: uma linha por item, com as
+// datas herdadas do cabecalho.
+//
+// - Itens de alugueis inexistentes (orfaos) sao ignorados.
+// - excludeRentalId remove TODOS os itens de um aluguel (edicao: o proprio
+//   aluguel nao deve contar contra si mesmo).
+function occupancyFromItems(rentals, items, excludeRentalId) {
+  const headerById = new Map(rentals.map((r) => [r.id, r]));
+  const rows = [];
+  for (const it of items) {
+    if (excludeRentalId != null && it.rental_id === excludeRentalId) continue;
+    const header = headerById.get(it.rental_id);
+    if (!header) continue;
+    rows.push({
+      id: it.id,
+      material_id: it.material_id,
+      quantity: it.quantity,
+      status: it.status,
+      checkout_date: header.checkout_date,
+      expected_return_date: header.expected_return_date,
+    });
+  }
+  return rows;
+}
+
 module.exports = {
   STATUS_RENTED,
   isValidDate,
@@ -84,4 +110,5 @@ module.exports = {
   overlappingRentals,
   peakReserved,
   availabilityForPeriod,
+  occupancyFromItems,
 };

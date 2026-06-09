@@ -38,19 +38,53 @@ const SCHEMAS = {
     { key: "notes", header: "observacoes" },
     ...TIMESTAMP_COLUMNS,
   ],
+  // Dados gerais do aluguel (cabecalho). Os materiais ficam em itens_aluguel.csv.
   rentals: [
     { key: "id", header: "id" },
-    { key: "material_id", header: "id_material" },
     { key: "agency_id", header: "id_agencia" },
-    { key: "quantity", header: "quantidade" },
+    { key: "event_name", header: "nome_evento" },
     { key: "checkout_date", header: "data_retirada" },
     { key: "expected_return_date", header: "data_prevista_devolucao" },
-    { key: "actual_return_date", header: "data_devolucao" },
-    { key: "status", header: "situacao" },
     { key: "notes", header: "observacoes" },
     ...TIMESTAMP_COLUMNS,
   ],
+  // Itens (materiais) de cada aluguel. Situacao/devolucao controladas por item,
+  // permitindo devolucao parcial.
+  rentalItems: [
+    { key: "id", header: "id" },
+    { key: "rental_id", header: "id_aluguel" },
+    { key: "material_id", header: "id_material" },
+    { key: "quantity", header: "quantidade" },
+    { key: "status", header: "situacao" },
+    { key: "actual_return_date", header: "data_devolucao" },
+    ...TIMESTAMP_COLUMNS,
+  ],
+  // Metadados dos anexos. O arquivo fisico fica em anexos/alugueis/<id_aluguel>/,
+  // e caminho_relativo e sempre relativo a pasta de dados (nunca absoluto).
+  attachments: [
+    { key: "id", header: "id" },
+    { key: "rental_id", header: "id_aluguel" },
+    { key: "file_name", header: "nome_original" },
+    { key: "rel_path", header: "caminho_relativo" },
+    { key: "size", header: "tamanho_bytes" },
+    ...TIMESTAMP_COLUMNS,
+  ],
 };
+
+// Esquema do alugueis.csv da versao anterior (um material por aluguel).
+// Usado apenas pela migracao para o modelo com itens.
+const LEGACY_RENTALS_SCHEMA = [
+  { key: "id", header: "id" },
+  { key: "material_id", header: "id_material" },
+  { key: "agency_id", header: "id_agencia" },
+  { key: "quantity", header: "quantidade" },
+  { key: "checkout_date", header: "data_retirada" },
+  { key: "expected_return_date", header: "data_prevista_devolucao" },
+  { key: "actual_return_date", header: "data_devolucao" },
+  { key: "status", header: "situacao" },
+  { key: "notes", header: "observacoes" },
+  ...TIMESTAMP_COLUMNS,
+];
 
 // Cabecalhos das versoes antigas (delimitador virgula, nomes em ingles).
 // Usado apenas pela migracao. Mapeia header_antigo -> key interna.
@@ -74,7 +108,7 @@ const LEGACY_HEADER_TO_KEY = {
 };
 
 // Colunas numericas (por key interna), convertidas para Number na leitura.
-const NUMERIC_FIELDS = new Set(["total_quantity", "quantity"]);
+const NUMERIC_FIELDS = new Set(["total_quantity", "quantity", "size"]);
 
 function headersOf(schema) {
   return schema.map((c) => c.header);
@@ -227,6 +261,73 @@ function migrateLegacy(oldPath, newPath, schema) {
   return true;
 }
 
+// Migra o alugueis.csv da versao anterior (um material por linha) para o novo
+// modelo: dados gerais em alugueis.csv + materiais em itens_aluguel.csv.
+//
+// Deteccao: o cabecalho antigo contem a coluna "id_material". So roda nesse
+// caso, entao e seguro chamar em toda inicializacao.
+//
+// Garantias:
+//   - O id do aluguel e preservado (o registro antigo vira o cabecalho).
+//   - O material vira o primeiro item, com id deterministico "<id>-i1"
+//     (re-rodar a migracao apos uma falha parcial nao duplica itens).
+//   - O arquivo antigo e copiado como backup antes de qualquer gravacao.
+//   - Os itens sao gravados antes do novo alugueis.csv: se o processo cair no
+//     meio, o arquivo antigo continua intacto e a migracao roda de novo.
+function migrateRentalsToItems(rentalsPath, itemsPath, rentalsSchema, itemsSchema) {
+  if (!fs.existsSync(rentalsPath)) return false;
+  const header = readHeaderLine(rentalsPath);
+  if (!header || !header.includes("id_material")) return false;
+
+  const legacyRows = readAll(rentalsPath, LEGACY_RENTALS_SCHEMA);
+
+  // Backup do arquivo original (preserva os dados antigos intactos).
+  const dir = path.dirname(rentalsPath);
+  const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  let backupPath = path.join(dir, `alugueis-backup-${stamp}.csv`);
+  for (let n = 2; fs.existsSync(backupPath); n++) {
+    backupPath = path.join(dir, `alugueis-backup-${stamp}-${n}.csv`);
+  }
+  fs.copyFileSync(rentalsPath, backupPath);
+
+  const rentals = [];
+  const items = [];
+  for (const old of legacyRows) {
+    rentals.push({
+      id: old.id,
+      agency_id: old.agency_id,
+      event_name: "",
+      checkout_date: old.checkout_date,
+      expected_return_date: old.expected_return_date,
+      notes: old.notes,
+      adicionado_em: old.adicionado_em,
+      alterado_em: old.alterado_em,
+    });
+    items.push({
+      id: `${old.id}-i1`,
+      rental_id: old.id,
+      material_id: old.material_id,
+      quantity: old.quantity,
+      status: old.status || "alugado",
+      actual_return_date: old.actual_return_date,
+      adicionado_em: old.adicionado_em,
+      alterado_em: old.alterado_em,
+    });
+  }
+
+  // Preserva itens ja existentes de outros alugueis (caso raro de arquivo de
+  // itens criado antes da migracao), sem duplicar os que serao regravados.
+  let existingItems = [];
+  if (fs.existsSync(itemsPath)) {
+    const migratedIds = new Set(items.map((it) => it.id));
+    existingItems = readAll(itemsPath, itemsSchema).filter((it) => !migratedIds.has(it.id));
+  }
+
+  writeAll(itemsPath, itemsSchema, [...existingItems, ...items]);
+  writeAll(rentalsPath, rentalsSchema, rentals);
+  return true;
+}
+
 // Le apenas a primeira linha (cabecalho) do arquivo, sem carregar tudo.
 function readHeaderLine(filePath) {
   let raw;
@@ -281,6 +382,7 @@ function newId() {
 
 module.exports = {
   SCHEMAS,
+  LEGACY_RENTALS_SCHEMA,
   DELIMITER,
   headersOf,
   keysOf,
@@ -288,6 +390,7 @@ module.exports = {
   readAll,
   writeAll,
   migrateLegacy,
+  migrateRentalsToItems,
   reconcileSchema,
   fileSignature,
   newId,
