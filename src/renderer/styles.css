@@ -178,6 +178,7 @@ html, body {
 .filters-row > select { width: auto; min-width: 160px; }
 .filter-range { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); margin-bottom: 0; font-weight: 500; }
 .filter-range input[type="date"] { width: auto; }
+.filter-range .date-field { width: 150px; }
 .filter-check { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); margin-bottom: 0; font-weight: 500; }
 .filter-check input { width: auto; }
 
@@ -273,6 +274,109 @@ label { display: block; font-size: 13px; margin-bottom: 5px; color: #334155; fon
 .form-error.hidden { display: none; }
 .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
 .hint strong { color: var(--text); }
+.hint.warn { color: #991b1b; }
+select:disabled { background: var(--surface-2); color: var(--muted); cursor: not-allowed; }
+
+/* Campo de data: texto DD/MM/YYYY + botao com calendario nativo moderno */
+.date-field { position: relative; display: inline-flex; align-items: center; width: 100%; }
+.date-field .date-br { width: 100%; padding-right: 38px; }
+input.date-br.invalid { border-color: var(--danger); outline-color: var(--danger); }
+.date-pick-btn {
+  position: absolute;
+  right: 1px;
+  top: 1px;
+  bottom: 1px;
+  width: 34px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: 0 8px 8px 0;
+}
+.date-pick-btn:hover { color: var(--primary); background: var(--surface-2); }
+.date-pick-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+/* O input nativo fica invisivel; serve apenas para guardar o ISO e ancorar o
+   calendario aberto pelo botao. */
+.date-native {
+  position: absolute;
+  right: 10px;
+  bottom: 0;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ----------------------------- Seletor de materiais (lista densa) ----------------------------- */
+.mat-picker { display: flex; flex-direction: column; gap: 8px; }
+.mat-search { width: 100%; }
+
+.mat-list {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  max-height: 240px;
+  overflow-y: auto;
+  outline: none;
+}
+.mat-list:focus-visible { box-shadow: 0 0 0 2px var(--primary); }
+
+.mat-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  font-size: 13px;
+}
+.mat-option:last-child { border-bottom: none; }
+.mat-option:hover:not(.unavailable) { background: var(--surface-2); }
+
+.mat-swatch {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+}
+.mat-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.mat-counts { flex: 0 0 auto; font-size: 12px; color: var(--muted); }
+.mat-counts strong { color: var(--text); }
+
+.mat-state-badge {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  min-width: 84px;
+  text-align: center;
+}
+.mat-state-badge.available { background: var(--primary-soft); color: #2c6e0a; }
+.mat-state-badge.limited { background: #fef3c7; color: #92400e; }
+.mat-state-badge.unavailable { background: #fee2e2; color: #991b1b; }
+
+/* Estado selecionado: destaque claro com a cor primaria */
+.mat-option.selected {
+  background: var(--primary-soft);
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+.mat-option.selected .mat-name { color: var(--primary-dark); }
+
+/* Foco do teclado (opcao ativa) */
+.mat-option.active { outline: 2px solid var(--primary); outline-offset: -2px; }
+
+/* Indisponiveis: visiveis, porem desabilitados */
+.mat-option.unavailable { opacity: 0.55; cursor: not-allowed; }
+.mat-option.unavailable .mat-name { text-decoration: line-through; }
+
+.mat-empty { padding: 18px 12px; text-align: center; color: var(--muted); font-size: 13px; }
 
 /* ----------------------------- Files report ----------------------------- */
 .files-report { margin: 12px 0; display: flex; flex-direction: column; gap: 8px; }
@@ -450,6 +554,7 @@ label { display: block; font-size: 13px; margin-bottom: 5px; color: #334155; fon
 .filter-group { display: flex; flex-direction: column; gap: 4px; }
 .filter-group > label { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); }
 .filter-group select, .filter-group input[type="date"] { width: auto; min-width: 130px; padding: 7px 10px; }
+.filter-group .date-field { min-width: 150px; }
 .filter-custom { flex-direction: row; align-items: center; gap: 6px; }
 .filter-custom label { text-transform: none; letter-spacing: 0; }
 .filter-bar .btn { align-self: center; margin-top: auto; }

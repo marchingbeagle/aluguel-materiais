@@ -60,10 +60,18 @@
               </select>
             </div>
             <div class="filter-group filter-custom" id="fltCustomRange" hidden>
-              <label for="fltFrom">De</label>
-              <input type="date" id="fltFrom" />
-              <label for="fltTo">ate</label>
-              <input type="date" id="fltTo" />
+              <label for="fltFromBR">De</label>
+              <div class="date-field">
+                <input type="text" id="fltFromBR" class="date-br" data-target="fltFrom" inputmode="numeric" maxlength="10" placeholder="dd/mm/aaaa" autocomplete="off" />
+                <button type="button" class="date-pick-btn" data-pick="fltFrom" aria-label="Abrir calendario"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg></button>
+                <input type="date" class="date-native" id="fltFrom" tabindex="-1" aria-hidden="true" />
+              </div>
+              <label for="fltToBR">ate</label>
+              <div class="date-field">
+                <input type="text" id="fltToBR" class="date-br" data-target="fltTo" inputmode="numeric" maxlength="10" placeholder="dd/mm/aaaa" autocomplete="off" />
+                <button type="button" class="date-pick-btn" data-pick="fltTo" aria-label="Abrir calendario"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg></button>
+                <input type="date" class="date-native" id="fltTo" tabindex="-1" aria-hidden="true" />
+              </div>
             </div>
             <div class="filter-group">
               <label for="fltAgency">Agencia</label>
@@ -182,7 +190,7 @@
           <div class="table-wrap">
             <table id="materials-table">
               <thead>
-                <tr><th>Nome</th><th>Total</th><th>Alugado</th><th>Disponivel</th><th>Observacoes</th><th class="col-actions">Acoes</th></tr>
+                <tr><th>Nome</th><th>Total</th><th>Alugado</th><th>Observacoes</th><th class="col-actions">Acoes</th></tr>
               </thead>
               <tbody></tbody>
             </table>
@@ -229,16 +237,32 @@
             </div>
             <div class="filters-row">
               <label class="filter-range">Retirada de
-                <input type="date" id="rentalCheckoutFrom" />
+                <span class="date-field">
+                  <input type="text" class="date-br" data-target="rentalCheckoutFrom" inputmode="numeric" maxlength="10" placeholder="dd/mm/aaaa" autocomplete="off" />
+                  <button type="button" class="date-pick-btn" data-pick="rentalCheckoutFrom" aria-label="Abrir calendario"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg></button>
+                  <input type="date" class="date-native" id="rentalCheckoutFrom" tabindex="-1" aria-hidden="true" />
+                </span>
               </label>
               <label class="filter-range">ate
-                <input type="date" id="rentalCheckoutTo" />
+                <span class="date-field">
+                  <input type="text" class="date-br" data-target="rentalCheckoutTo" inputmode="numeric" maxlength="10" placeholder="dd/mm/aaaa" autocomplete="off" />
+                  <button type="button" class="date-pick-btn" data-pick="rentalCheckoutTo" aria-label="Abrir calendario"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg></button>
+                  <input type="date" class="date-native" id="rentalCheckoutTo" tabindex="-1" aria-hidden="true" />
+                </span>
               </label>
               <label class="filter-range">Prev. devolucao de
-                <input type="date" id="rentalReturnFrom" />
+                <span class="date-field">
+                  <input type="text" class="date-br" data-target="rentalReturnFrom" inputmode="numeric" maxlength="10" placeholder="dd/mm/aaaa" autocomplete="off" />
+                  <button type="button" class="date-pick-btn" data-pick="rentalReturnFrom" aria-label="Abrir calendario"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg></button>
+                  <input type="date" class="date-native" id="rentalReturnFrom" tabindex="-1" aria-hidden="true" />
+                </span>
               </label>
               <label class="filter-range">ate
-                <input type="date" id="rentalReturnTo" />
+                <span class="date-field">
+                  <input type="text" class="date-br" data-target="rentalReturnTo" inputmode="numeric" maxlength="10" placeholder="dd/mm/aaaa" autocomplete="off" />
+                  <button type="button" class="date-pick-btn" data-pick="rentalReturnTo" aria-label="Abrir calendario"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg></button>
+                  <input type="date" class="date-native" id="rentalReturnTo" tabindex="-1" aria-hidden="true" />
+                </span>
               </label>
               <label class="filter-check">
                 <input type="checkbox" id="rentalOverdueOnly" /> Somente atrasados
@@ -349,6 +373,8 @@
     <div id="toasts" class="toasts"></div>
 
     <script src="vendor/chart.umd.min.js"></script>
+    <script src="../shared/dates.js"></script>
+    <script src="../shared/formState.js"></script>
     <script src="analytics.js"></script>
     <script src="app.js"></script>
   </body>

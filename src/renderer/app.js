@@ -25,10 +25,104 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
+// Exibicao de datas: converte o valor interno (YYYY-MM-DD) para DD/MM/YYYY.
+// Toda a logica de datas e centralizada em window.DateUtils (src/shared/dates.js).
 function fmtDate(iso) {
-  if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return "-";
-  const [y, m, d] = iso.split("-");
-  return `${d}/${m}/${y}`;
+  return DateUtils.formatBR(iso, "-");
+}
+
+// ----------------------------- Entrada de datas (DD/MM/YYYY) -----------------------------
+
+// Aplica a mascara dd/mm/aaaa enquanto o usuario digita (apenas digitos).
+function maskBRDate(el) {
+  const digits = el.value.replace(/\D/g, "").slice(0, 8);
+  let out = digits;
+  if (digits.length > 4) out = `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+  else if (digits.length > 2) out = `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  el.value = out;
+}
+
+// Flag para evitar loop de sincronizacao entre o texto BR e o input nativo de
+// data: enquanto o usuario digita no campo BR, ignoramos o eco do input nativo.
+let syncingFromBR = false;
+
+// Sincroniza o campo visivel (BR) com o input de data nativo (ISO), que carrega
+// o "name" do formulario e e lido pelos filtros. Dispara eventos no nativo para
+// que os listeners existentes (que observam o campo ISO) continuem funcionando.
+function syncNativeFromBR(visible, native) {
+  if (!native) return;
+  const iso = DateUtils.brToISO(visible.value);
+  const hasText = visible.value.trim().length > 0;
+  visible.classList.toggle("invalid", hasText && !iso);
+  if (native.value !== iso) {
+    syncingFromBR = true;
+    native.value = iso;
+    native.dispatchEvent(new Event("input", { bubbles: true }));
+    native.dispatchEvent(new Event("change", { bubbles: true }));
+    syncingFromBR = false;
+  }
+}
+
+// Define (ou limpa) um par de campos de data: ajusta o input nativo (ISO) e o
+// visivel (BR). Usado ao limpar filtros.
+function setBRDateField(targetId, iso) {
+  const native = document.getElementById(targetId);
+  const visible = document.querySelector(`input.date-br[data-target="${targetId}"]`);
+  if (native) native.value = iso || "";
+  if (visible) {
+    visible.value = DateUtils.isoToBR(iso || "");
+    visible.classList.remove("invalid");
+  }
+}
+
+// Liga todos os campos de data dentro de um container (filtros, formularios).
+// Cada campo tem: input.date-br (texto DD/MM/YYYY) + input.date-native
+// (type=date, guarda o ISO) + botao .date-pick-btn (abre o calendario).
+function initDateInputs(root) {
+  const scope = root || document;
+  scope.querySelectorAll("input.date-br").forEach((visible) => {
+    if (visible.dataset.bound === "1") return;
+    visible.dataset.bound = "1";
+    const native = document.getElementById(visible.dataset.target);
+
+    // Inicializa o texto visivel a partir do valor ISO ja presente no nativo.
+    if (native && native.value) visible.value = DateUtils.isoToBR(native.value);
+
+    // Digitacao manual no campo BR -> atualiza o nativo (ISO).
+    visible.addEventListener("input", () => {
+      maskBRDate(visible);
+      syncNativeFromBR(visible, native);
+    });
+    visible.addEventListener("blur", () => syncNativeFromBR(visible, native));
+
+    // Selecao no calendario nativo -> atualiza o texto BR (sem sobrescrever o
+    // que o usuario esta digitando, graças a flag syncingFromBR).
+    if (native) {
+      const reflect = () => {
+        if (syncingFromBR) return;
+        visible.value = DateUtils.isoToBR(native.value);
+        visible.classList.remove("invalid");
+      };
+      native.addEventListener("input", reflect);
+      native.addEventListener("change", reflect);
+    }
+  });
+
+  // Botao do calendario: abre o seletor nativo moderno.
+  scope.querySelectorAll(".date-pick-btn").forEach((btn) => {
+    if (btn.dataset.bound === "1") return;
+    btn.dataset.bound = "1";
+    btn.addEventListener("click", () => {
+      const native = document.getElementById(btn.dataset.pick);
+      if (!native) return;
+      try {
+        if (typeof native.showPicker === "function") native.showPicker();
+        else native.focus();
+      } catch (_err) {
+        native.focus();
+      }
+    });
+  });
 }
 
 // Nome da agencia prefixado pelo codigo (quando existir), ex.: "01 - Agencia X".
@@ -77,6 +171,33 @@ async function handleResult(promise, successMsg) {
 // ----------------------------- Modal -----------------------------
 
 let modalSubmitHandler = null;
+// Snapshot do estado inicial do formulario (para detectar alteracoes nao
+// salvas). null = nenhum formulario aberto / sem baseline.
+let modalInitialSnapshot = null;
+
+// Captura o estado atual de todos os campos do formulario do modal. Considera
+// textos, datas, seletores, numeros, checkboxes/radios e campos ocultos (ex.: a
+// escolha de material), usando name ou id como chave.
+function snapshotModal() {
+  const entries = [];
+  $$("#modalBody input, #modalBody select, #modalBody textarea").forEach((el, i) => {
+    const key = el.name || el.id || `__field${i}`;
+    const value =
+      el.type === "checkbox" || el.type === "radio" ? (el.checked ? "1" : "0") : (el.value ?? "");
+    entries.push([key, value]);
+  });
+  return FormState.createSnapshot(entries);
+}
+
+// Registra o estado atual como "limpo" (sem alteracoes pendentes).
+function markModalPristine() {
+  modalInitialSnapshot = snapshotModal();
+}
+
+// Ha alteracoes nao salvas em relacao ao estado inicial?
+function isModalDirty() {
+  return FormState.isDirty(modalInitialSnapshot, snapshotModal());
+}
 
 function openModal(title, bodyHtml, onSubmit, submitLabel = "Salvar") {
   $("#modalTitle").textContent = title;
@@ -85,6 +206,8 @@ function openModal(title, bodyHtml, onSubmit, submitLabel = "Salvar") {
   $("#modalError").classList.add("hidden");
   modalSubmitHandler = onSubmit;
   $("#modal").classList.remove("hidden");
+  // Baseline do estado inicial logo apos renderizar os campos.
+  markModalPristine();
   const first = $("#modalBody input, #modalBody select, #modalBody textarea");
   if (first) first.focus();
 }
@@ -92,6 +215,37 @@ function openModal(title, bodyHtml, onSubmit, submitLabel = "Salvar") {
 function closeModal() {
   $("#modal").classList.add("hidden");
   modalSubmitHandler = null;
+  modalInitialSnapshot = null;
+}
+
+// Solicitacao centralizada de fechamento: todas as formas de sair do modal
+// (clicar fora, botao fechar, cancelar, Esc) passam por aqui. So pede
+// confirmacao quando ha alteracoes nao salvas.
+let discardDialogOpen = false;
+function requestCloseModal() {
+  if ($("#modal").classList.contains("hidden")) return;
+  if (discardDialogOpen) return; // evita dialogos duplicados
+  if (!isModalDirty()) {
+    closeModal();
+    return;
+  }
+  discardDialogOpen = true;
+  confirmDialog(
+    "Voce possui alteracoes nao salvas. Deseja fechar e descarta-las?",
+    () => {
+      discardDialogOpen = false;
+      closeModal();
+    },
+    {
+      title: "Descartar alteracoes?",
+      okLabel: "Descartar e fechar",
+      cancelLabel: "Continuar editando",
+      focus: "cancel", // foco inicial na acao segura
+      onCancel: () => {
+        discardDialogOpen = false;
+      },
+    }
+  );
 }
 
 function showModalError(msg) {
@@ -100,24 +254,34 @@ function showModalError(msg) {
   el.classList.remove("hidden");
 }
 
-function confirmDialog(message, onOk, { title = "Confirmar exclusao", okLabel = "Excluir" } = {}) {
+function confirmDialog(
+  message,
+  onOk,
+  { title = "Confirmar exclusao", okLabel = "Excluir", cancelLabel = "Cancelar", focus = "cancel", onCancel = null } = {}
+) {
   $("#confirmTitle").textContent = title;
   $("#confirmMessage").textContent = message;
   $("#confirmOk").textContent = okLabel;
+  $("#confirmCancel").textContent = cancelLabel;
   $("#confirm").classList.remove("hidden");
   const ok = $("#confirmOk");
   const cancel = $("#confirmCancel");
   const close = () => {
     $("#confirm").classList.add("hidden");
     ok.removeEventListener("click", okFn);
-    cancel.removeEventListener("click", close);
+    cancel.removeEventListener("click", cancelFn);
   };
   const okFn = async () => {
     close();
     await onOk();
   };
+  const cancelFn = async () => {
+    close();
+    if (onCancel) await onCancel();
+  };
   ok.addEventListener("click", okFn);
-  cancel.addEventListener("click", close);
+  cancel.addEventListener("click", cancelFn);
+  (focus === "ok" ? ok : cancel).focus();
 }
 
 // Le os campos nomeados do formulario do modal.
@@ -608,8 +772,8 @@ function renderActiveRentals(result) {
 
 function resetDashFilters() {
   $("#fltPreset").value = "last30";
-  $("#fltFrom").value = "";
-  $("#fltTo").value = "";
+  setBRDateField("fltFrom", "");
+  setBRDateField("fltTo", "");
   $("#fltAgency").value = "";
   $("#fltMaterial").value = "";
   $("#fltStatus").value = "";
@@ -644,21 +808,17 @@ function renderMaterials() {
 
   const tbody = $("#materials-table tbody");
   if (!rows.length) {
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="6">Nenhum material encontrado.</td></tr>`;
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="5">Nenhum material encontrado.</td></tr>`;
     return;
   }
   tbody.innerHTML = rows
     .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"))
     .map((m) => {
-      const availBadge = m.available <= 0
-        ? `<span class="badge badge-zero">${m.available}</span>`
-        : `<span class="badge badge-ok">${m.available}</span>`;
       const swatchColor = m.color || DEFAULT_MATERIAL_COLOR;
       return `<tr>
         <td><span class="swatch" style="background:${escapeHtml(swatchColor)}" title="${escapeHtml(m.color ? swatchColor : "Cor padrao")}"></span>${escapeHtml(m.name)}</td>
         <td>${escapeHtml(m.total_quantity)}</td>
         <td>${escapeHtml(m.rented)}</td>
-        <td>${availBadge}</td>
         <td>${escapeHtml(m.notes) || "-"}</td>
         <td class="col-actions">
           <button class="btn-link" data-edit-material="${m.id}">Editar</button>
@@ -921,24 +1081,57 @@ function clearRentalFilters() {
   $("#rentalAgencyCodeFilter").value = "";
   $("#rentalMaterialFilter").value = "";
   $("#rentalStatusFilter").value = "";
-  $("#rentalCheckoutFrom").value = "";
-  $("#rentalCheckoutTo").value = "";
-  $("#rentalReturnFrom").value = "";
-  $("#rentalReturnTo").value = "";
+  setBRDateField("rentalCheckoutFrom", "");
+  setBRDateField("rentalCheckoutTo", "");
+  setBRDateField("rentalReturnFrom", "");
+  setBRDateField("rentalReturnTo", "");
   $("#rentalOverdueOnly").checked = false;
   renderRentals();
 }
 
+// Rotulos e classificacao dos estados de disponibilidade no periodo.
+const MAT_STATE_LABEL = {
+  available: "Disponivel",
+  limited: "Limitado",
+  unavailable: "Indisponivel",
+};
+
+// Classifica a disponibilidade de um material no periodo:
+//   - "unavailable": nenhuma unidade livre (<= 0).
+//   - "limited": estoque baixo (sobrou pouco em relacao ao total).
+//   - "available": boa disponibilidade.
+function availabilityState(available, total) {
+  if (available <= 0) return "unavailable";
+  if (available < total && available <= Math.max(1, Math.floor(total * 0.34))) return "limited";
+  return "available";
+}
+
+// Icone de calendario usado no botao do date picker.
+const CALENDAR_ICON_SVG =
+  '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>';
+
+// Campo de data com:
+//   - input de texto visivel no formato DD/MM/YYYY (digitacao manual);
+//   - botao com calendario moderno (input type=date nativo) para selecao;
+//   - input type=date que guarda o valor interno ISO e leva o "name" do form.
+// O texto BR e o calendario nativo ficam sempre sincronizados.
+function brDateField({ label, name, baseId, iso, required }) {
+  const visibleId = `${baseId}BR`;
+  const brValue = DateUtils.isoToBR(iso || "");
+  const req = required ? "required" : "";
+  return `
+    <label for="${visibleId}">${escapeHtml(label)}</label>
+    <div class="date-field">
+      <input type="text" id="${visibleId}" class="date-br" data-target="${baseId}"
+        inputmode="numeric" maxlength="10" placeholder="dd/mm/aaaa" autocomplete="off" value="${escapeHtml(brValue)}" ${req} />
+      <button type="button" class="date-pick-btn" data-pick="${baseId}" aria-label="Abrir calendario">${CALENDAR_ICON_SVG}</button>
+      <input type="date" class="date-native" name="${name}" id="${baseId}" value="${escapeHtml(iso || "")}" tabindex="-1" aria-hidden="true" />
+    </div>`;
+}
+
 function rentalFormHtml(r = {}) {
   const isReturned = r.status === "devolvido";
-  const materialOptions = data.materials
-    .slice()
-    .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"))
-    .map((m) => {
-      const sel = m.id === r.material_id ? " selected" : "";
-      return `<option value="${m.id}" data-available="${m.available}"${sel}>${escapeHtml(m.name)} (disp.: ${m.available})</option>`;
-    })
-    .join("");
+
   const agencyOptions = data.agencies
     .map((a) => {
       const sel = a.id === r.agency_id ? " selected" : "";
@@ -949,44 +1142,46 @@ function rentalFormHtml(r = {}) {
 
   const returnedField = isReturned
     ? `<div class="field full">
-        <label>Data de devolucao</label>
-        <input name="actual_return_date" type="date" value="${escapeHtml(r.actual_return_date)}" />
+        ${brDateField({ label: "Data de devolucao", name: "actual_return_date", baseId: "rentalActual", iso: r.actual_return_date, required: false })}
       </div>`
     : "";
 
+  // Mostra a busca apenas quando ha materiais suficientes para justificar.
+  const showSearch = data.materials.length > 6;
+
+  // Ordem dos campos: retirada, devolucao prevista, material (lista), quantidade.
   return `
     <div class="form-grid">
-      <div class="field full">
-        <label>Material *</label>
-        <select name="material_id" id="rentalMaterial" required>
-          <option value="">Selecione...</option>
-          ${materialOptions}
-        </select>
-        <div class="hint" id="availHint"></div>
+      <div class="field">
+        ${brDateField({ label: "Data de retirada *", name: "checkout_date", baseId: "rentalCheckout", iso: r.checkout_date || data.today, required: true })}
+      </div>
+      <div class="field">
+        ${brDateField({ label: "Devolucao prevista *", name: "expected_return_date", baseId: "rentalReturn", iso: r.expected_return_date || data.today, required: true })}
       </div>
       <div class="field full">
-        <label>Agencia *</label>
-        <select name="agency_id" required>
+        <label id="matPickerLabel">Material *</label>
+        <input type="hidden" name="material_id" id="rentalMaterial" value="${escapeHtml(r.material_id || "")}" />
+        <div class="mat-picker">
+          ${showSearch ? `<input type="search" id="matSearch" class="mat-search" placeholder="Buscar material por nome..." autocomplete="off" />` : ""}
+          <div class="mat-list" id="matList" role="listbox" aria-labelledby="matPickerLabel" tabindex="0" aria-activedescendant=""></div>
+        </div>
+        <div class="hint" id="availHint"></div>
+      </div>
+      <div class="field">
+        <label for="rentalQty">Quantidade *</label>
+        <input name="quantity" id="rentalQty" type="number" min="1" step="1" value="${escapeHtml(r.quantity ?? 1)}" required />
+      </div>
+      <div class="field">
+        <label for="rentalAgency">Agencia *</label>
+        <select name="agency_id" id="rentalAgency" required>
           <option value="">Selecione...</option>
           ${agencyOptions}
         </select>
       </div>
-      <div class="field">
-        <label>Quantidade *</label>
-        <input name="quantity" id="rentalQty" type="number" min="1" step="1" value="${escapeHtml(r.quantity ?? 1)}" required />
-      </div>
-      <div class="field">
-        <label>Data de retirada *</label>
-        <input name="checkout_date" type="date" value="${escapeHtml(r.checkout_date || data.today)}" required />
-      </div>
-      <div class="field full">
-        <label>Devolucao prevista *</label>
-        <input name="expected_return_date" type="date" value="${escapeHtml(r.expected_return_date || data.today)}" required />
-      </div>
       ${returnedField}
       <div class="field full">
-        <label>Observacoes</label>
-        <textarea name="notes">${escapeHtml(r.notes)}</textarea>
+        <label for="rentalNotes">Observacoes</label>
+        <textarea name="notes" id="rentalNotes">${escapeHtml(r.notes)}</textarea>
       </div>
     </div>`;
 }
@@ -1001,6 +1196,24 @@ function openRentalForm(rental) {
     rentalFormHtml(rental || {}),
     async () => {
       const v = formValues();
+      // Defesa adicional na interface: o backend revalida tudo, mas evitamos
+      // chamadas obviamente invalidas e damos retorno imediato ao usuario.
+      if (!DateUtils.isValidISO(v.checkout_date)) {
+        showModalError("Informe uma data de retirada valida (dd/mm/aaaa).");
+        return { ok: false };
+      }
+      if (!DateUtils.isValidISO(v.expected_return_date)) {
+        showModalError("Informe uma devolucao prevista valida (dd/mm/aaaa).");
+        return { ok: false };
+      }
+      if (v.expected_return_date < v.checkout_date) {
+        showModalError("A devolucao prevista nao pode ser anterior a retirada.");
+        return { ok: false };
+      }
+      if (!v.material_id) {
+        showModalError("Selecione um material disponivel no periodo.");
+        return { ok: false };
+      }
       if (editing) {
         v.id = rental.id;
         v._baseline = rental;
@@ -1011,21 +1224,255 @@ function openRentalForm(rental) {
     editing ? "Salvar" : "Registrar"
   );
 
-  // Atualiza dica de disponibilidade e limite de quantidade ao escolher material.
-  const matSel = $("#rentalMaterial");
-  const qty = $("#rentalQty");
+  // A lista de materiais so calcula a disponibilidade depois que o periodo
+  // (retirada + devolucao prevista) for valido. O calculo roda no processo
+  // principal, considerando todo o intervalo informado.
+  const checkoutH = $("#rentalCheckout");
+  const returnH = $("#rentalReturn");
+  const checkoutV = $("#rentalCheckoutBR");
+  const returnV = $("#rentalReturnBR");
+  const matHidden = $("#rentalMaterial");
+  const matList = $("#matList");
+  const matSearch = $("#matSearch");
+  const qtyInput = $("#rentalQty");
   const hint = $("#availHint");
+  const excludeId = editing ? rental.id : null;
+
+  let availMap = null; // { materialId: disponivel } ou null enquanto sem periodo
+  let loading = false;
+  let activeId = ""; // opcao em foco para navegacao por teclado
+
+  initDateInputs($("#modalBody"));
+
+  const getSelected = () => matHidden.value || "";
+
+  // Estado do periodo informado, para escolher a mensagem correta.
+  const periodStatus = () => {
+    const cIso = checkoutH.value;
+    const rIso = returnH.value;
+    const cText = (checkoutV?.value || "").trim();
+    const rText = (returnV?.value || "").trim();
+    const cOk = DateUtils.isValidISO(cIso);
+    const rOk = DateUtils.isValidISO(rIso);
+    if ((cText && !cOk) || (rText && !rOk)) return "invalid";
+    if (!cOk || !rOk) return "incomplete";
+    if (rIso < cIso) return "order";
+    return "ok";
+  };
+
+  // Monta a lista de materiais ordenada (disponiveis primeiro) com seus estados.
+  const buildItems = () => {
+    const term = (matSearch?.value || "").trim().toLowerCase();
+    let items = data.materials.map((m) => {
+      const total = Number(m.total_quantity) || 0;
+      const available = availMap ? Number(availMap[m.id] ?? 0) : 0;
+      return { m, total, available, state: availabilityState(available, total) };
+    });
+    if (term) items = items.filter((x) => x.m.name.toLowerCase().includes(term));
+    items.sort((a, b) => {
+      const aUnav = a.state === "unavailable" ? 1 : 0;
+      const bUnav = b.state === "unavailable" ? 1 : 0;
+      if (aUnav !== bUnav) return aUnav - bUnav; // disponiveis antes dos indisponiveis
+      return a.m.name.localeCompare(b.m.name, "pt-BR");
+    });
+    return items;
+  };
+
+  const optionHtml = ({ m, total, available, state }) => {
+    const color = m.color || DEFAULT_MATERIAL_COLOR;
+    const selected = m.id === getSelected();
+    const disabled = state === "unavailable";
+    const active = m.id === activeId;
+    const classes = ["mat-option", state];
+    if (selected) classes.push("selected");
+    if (active) classes.push("active");
+    return `<div class="${classes.join(" ")}" id="matopt-${escapeHtml(m.id)}" role="option" data-id="${escapeHtml(m.id)}"
+      aria-selected="${selected}" aria-disabled="${disabled}">
+      <span class="mat-swatch" style="background:${escapeHtml(color)}"></span>
+      <span class="mat-name">${escapeHtml(m.name)}</span>
+      <span class="mat-counts"><strong>${Math.max(0, available)}</strong> de ${total} disp.</span>
+      <span class="mat-state-badge ${state}">${MAT_STATE_LABEL[state]}</span>
+    </div>`;
+  };
+
+  const emptyMsg = (text) => `<div class="mat-empty">${escapeHtml(text)}</div>`;
+
+  const renderList = () => {
+    const status = periodStatus();
+    if (status === "incomplete") {
+      matList.innerHTML = emptyMsg("Informe a retirada e a devolucao prevista para ver os materiais disponiveis no periodo.");
+      return;
+    }
+    if (status === "invalid") {
+      matList.innerHTML = emptyMsg("Data invalida. Use o formato dd/mm/aaaa (ex.: 31/12/2026).");
+      return;
+    }
+    if (status === "order") {
+      matList.innerHTML = emptyMsg("A devolucao prevista nao pode ser anterior a retirada.");
+      return;
+    }
+    if (loading) {
+      matList.innerHTML = emptyMsg("Calculando disponibilidade no periodo...");
+      return;
+    }
+    if (!data.materials.length) {
+      matList.innerHTML = emptyMsg("Nenhum material cadastrado.");
+      return;
+    }
+    const items = buildItems();
+    if (!items.length) {
+      matList.innerHTML = emptyMsg("Nenhum material encontrado para a busca.");
+      return;
+    }
+    matList.innerHTML = items.map(optionHtml).join("");
+    matList.setAttribute("aria-activedescendant", activeId ? `matopt-${activeId}` : "");
+  };
+
   const updateHint = () => {
-    const opt = matSel.selectedOptions[0];
-    const avail = opt ? Number(opt.dataset.available || 0) : 0;
-    if (matSel.value) {
-      hint.innerHTML = `Disponivel: <strong>${avail}</strong>`;
+    const status = periodStatus();
+    if (status !== "ok") {
+      hint.className = "hint";
+      if (status === "invalid") hint.className = "hint warn";
+      if (status === "order") hint.className = "hint warn";
+      hint.textContent =
+        status === "invalid"
+          ? "Verifique as datas informadas (formato dd/mm/aaaa)."
+          : status === "order"
+          ? "A devolucao prevista nao pode ser anterior a retirada."
+          : "Informe o periodo para liberar a selecao de materiais.";
+      return;
+    }
+    const id = getSelected();
+    if (!id) {
+      hint.className = "hint";
+      hint.textContent = "Selecione um material para registrar o aluguel.";
+      return;
+    }
+    const av = availMap ? Number(availMap[id] ?? 0) : 0;
+    if (av <= 0) {
+      hint.className = "hint warn";
+      hint.textContent = "Sem unidades disponiveis neste periodo para o material selecionado.";
     } else {
-      hint.textContent = "";
+      hint.className = "hint";
+      hint.innerHTML = `Disponivel no periodo: <strong>${av}</strong> unidade(s). Quantidade maxima: ${av}.`;
     }
   };
-  matSel.addEventListener("change", updateHint);
-  if (editing) updateHint();
+
+  // Aplica o limite de quantidade conforme a disponibilidade do material.
+  const applyQtyMax = () => {
+    const id = getSelected();
+    const av = availMap ? Number(availMap[id] ?? 0) : 0;
+    if (id && av > 0) {
+      qtyInput.max = String(av);
+      if (Number(qtyInput.value) > av) qtyInput.value = String(av);
+    } else {
+      qtyInput.removeAttribute("max");
+    }
+  };
+
+  const selectMaterial = (id) => {
+    matHidden.value = id;
+    activeId = id;
+    renderList();
+    applyQtyMax();
+    updateHint();
+  };
+
+  // Lista de ids habilitados, na ordem exibida (para navegacao por teclado).
+  const enabledIdsInOrder = () =>
+    Array.from(matList.querySelectorAll('.mat-option:not(.unavailable)')).map((el) => el.dataset.id);
+
+  const moveActive = (delta) => {
+    const ids = enabledIdsInOrder();
+    if (!ids.length) return;
+    const cur = ids.indexOf(activeId);
+    let next = cur + delta;
+    if (cur === -1) next = delta > 0 ? 0 : ids.length - 1;
+    next = Math.max(0, Math.min(ids.length - 1, next));
+    activeId = ids[next];
+    renderList();
+    const el = document.getElementById(`matopt-${activeId}`);
+    if (el) el.scrollIntoView({ block: "nearest" });
+  };
+
+  const refreshAvailability = async () => {
+    activeId = activeId || getSelected();
+    if (periodStatus() !== "ok") {
+      availMap = null;
+      loading = false;
+      renderList();
+      applyQtyMax();
+      updateHint();
+      return;
+    }
+    loading = true;
+    renderList();
+    updateHint();
+    try {
+      const res = await window.api.getAvailability({
+        checkout_date: checkoutH.value,
+        expected_return_date: returnH.value,
+        excludeId,
+      });
+      availMap = res && res.ok ? res.available || {} : {};
+    } catch (_err) {
+      availMap = {};
+    }
+    loading = false;
+    renderList();
+    applyQtyMax();
+    updateHint();
+  };
+
+  // Recalcula imediatamente quando qualquer uma das datas muda. Os eventos sao
+  // disparados pelo input oculto (ISO) via initDateInputs.
+  checkoutH.addEventListener("change", refreshAvailability);
+  returnH.addEventListener("change", refreshAvailability);
+
+  if (matSearch) matSearch.addEventListener("input", renderList);
+
+  matList.addEventListener("click", (e) => {
+    const opt = e.target.closest(".mat-option");
+    if (!opt || opt.classList.contains("unavailable")) return;
+    selectMaterial(opt.dataset.id);
+    matList.focus();
+  });
+
+  matList.addEventListener("keydown", (e) => {
+    switch (e.key) {
+      case "ArrowDown":
+        e.preventDefault();
+        moveActive(1);
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        moveActive(-1);
+        break;
+      case "Home":
+        e.preventDefault();
+        moveActive(-Infinity);
+        break;
+      case "End":
+        e.preventDefault();
+        moveActive(Infinity);
+        break;
+      case "Enter":
+      case " ":
+        if (activeId) {
+          e.preventDefault();
+          const el = document.getElementById(`matopt-${activeId}`);
+          if (el && !el.classList.contains("unavailable")) selectMaterial(activeId);
+        }
+        break;
+      default:
+        break;
+    }
+  });
+
+  // Recalcula a disponibilidade inicial e, so entao, registra o estado "limpo"
+  // do formulario (apos eventuais ajustes automaticos, como o limite de
+  // quantidade), para que abrir uma edicao sem mexer em nada nao gere alerta.
+  refreshAvailability().then(markModalPristine);
 }
 
 // ----------------------------- Calendario -----------------------------
@@ -1320,14 +1767,25 @@ function bindEvents() {
       $("#modalSubmit").disabled = false;
     }
   });
-  $("#modalClose").addEventListener("click", closeModal);
-  $("#modalCancel").addEventListener("click", closeModal);
+  // Todas as formas de fechar o formulario passam por requestCloseModal, que
+  // pede confirmacao quando ha alteracoes nao salvas.
+  $("#modalClose").addEventListener("click", requestCloseModal);
+  $("#modalCancel").addEventListener("click", requestCloseModal);
   $("#modal").addEventListener("click", (e) => {
-    if (e.target.id === "modal") closeModal();
+    if (e.target.id === "modal") requestCloseModal();
   });
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
-    if (!$("#modal").classList.contains("hidden")) closeModal();
+    // Se o dialogo de confirmacao estiver aberto, Esc equivale a acao segura
+    // (Cancelar / Continuar editando), evitando dialogos ou fechamentos duplos.
+    if (!$("#confirm").classList.contains("hidden")) {
+      $("#confirmCancel").click();
+      return;
+    }
+    if (!$("#modal").classList.contains("hidden")) {
+      requestCloseModal();
+      return;
+    }
     if (!$("#dayModal").classList.contains("hidden")) closeDayModal();
   });
 
@@ -1445,4 +1903,5 @@ function bindEvents() {
 // ----------------------------- Inicio -----------------------------
 
 bindEvents();
+initDateInputs(document); // filtros (datas) usam entrada DD/MM/YYYY
 loadAll();
