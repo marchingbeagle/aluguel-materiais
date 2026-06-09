@@ -245,6 +245,7 @@ label { display: block; font-size: 13px; margin-bottom: 5px; color: #334155; fon
 .badge-rented { background: #e2e8f0; color: #334155; }
 .badge-overdue { background: #fee2e2; color: #991b1b; }
 .badge-zero { background: #fee2e2; color: #991b1b; }
+.badge-partial { background: #fef3c7; color: #92400e; }
 
 /* ----------------------------- Modal ----------------------------- */
 .modal-overlay {
@@ -312,71 +313,129 @@ input.date-br.invalid { border-color: var(--danger); outline-color: var(--danger
   pointer-events: none;
 }
 
-/* ----------------------------- Seletor de materiais (lista densa) ----------------------------- */
-.mat-picker { display: flex; flex-direction: column; gap: 8px; }
-.mat-search { width: 100%; }
+/* ----------------------------- Materiais do aluguel (itens) ----------------------------- */
+.rental-items { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
 
-.mat-list {
+.rental-item-row {
+  display: grid;
+  grid-template-columns: 1fr 84px 32px;
+  gap: 8px;
+  align-items: center;
+}
+.rental-item-row .rental-item-avail {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: -2px;
+}
+.rental-item-row .rental-item-avail strong { color: var(--text); }
+.rental-item-row .rental-item-avail.warn { color: #991b1b; }
+
+/* Item ja devolvido: travado, apenas informativo */
+.rental-item-row.returned {
+  grid-template-columns: 1fr auto;
+  padding: 8px 10px;
+  background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--surface);
-  max-height: 240px;
-  overflow-y: auto;
-  outline: none;
 }
-.mat-list:focus-visible { box-shadow: 0 0 0 2px var(--primary); }
+.rental-item-locked { font-size: 13px; display: inline-flex; align-items: center; gap: 4px; }
 
-.mat-option {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
+.add-item-btn { display: inline-flex; align-items: center; gap: 6px; color: var(--primary-dark); border-color: var(--primary); }
+.add-item-btn:hover { background: var(--primary-soft); }
+
+/* Botao de icone discreto (remover item) */
+.icon-btn-light {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--muted);
   cursor: pointer;
+}
+.icon-btn-light:hover:not(:disabled) { background: var(--surface-2); }
+.icon-btn-light.danger:hover:not(:disabled) { color: var(--danger); border-color: var(--danger); }
+.icon-btn-light:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Resumo dos itens antes da confirmacao */
+.rental-summary {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
   font-size: 13px;
 }
-.mat-option:last-child { border-bottom: none; }
-.mat-option:hover:not(.unavailable) { background: var(--surface-2); }
+.rental-summary-list { margin: 0 0 6px; padding-left: 18px; }
+.rental-summary-list li { margin: 2px 0; }
+.rental-summary-meta { color: var(--muted); font-size: 12px; }
+.rental-summary-meta strong { color: var(--text); }
 
-.mat-swatch {
-  flex: 0 0 auto;
-  width: 12px;
-  height: 12px;
-  border-radius: 3px;
-  border: 1px solid rgba(0, 0, 0, 0.15);
+/* Lista de materiais na tabela de alugueis */
+.rental-items-cell { white-space: normal; min-width: 180px; }
+.rental-item-line { display: flex; align-items: center; font-size: 13px; padding: 1px 0; }
+.rental-item-line.returned { color: var(--muted); }
+
+/* ----------------------------- Anexos ----------------------------- */
+.attach-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.attach-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--text);
 }
-.mat-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
-.mat-counts { flex: 0 0 auto; font-size: 12px; color: var(--muted); }
-.mat-counts strong { color: var(--text); }
-
-.mat-state-badge {
+.attach-row svg { flex: 0 0 auto; color: var(--muted); }
+.attach-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attach-size { flex: 0 0 auto; color: var(--muted); font-size: 12px; }
+.attach-pending-badge, .att-missing-badge {
   flex: 0 0 auto;
   padding: 2px 8px;
   border-radius: 999px;
   font-size: 11px;
   font-weight: 600;
-  min-width: 84px;
-  text-align: center;
 }
-.mat-state-badge.available { background: var(--primary-soft); color: #2c6e0a; }
-.mat-state-badge.limited { background: #fef3c7; color: #92400e; }
-.mat-state-badge.unavailable { background: #fee2e2; color: #991b1b; }
+.attach-pending-badge { background: #e0f2fe; color: #075985; }
+.att-missing-badge { background: #fee2e2; color: #991b1b; }
+.attach-row .btn-link:disabled { color: var(--muted); cursor: not-allowed; text-decoration: none; }
 
-/* Estado selecionado: destaque claro com a cor primaria */
-.mat-option.selected {
-  background: var(--primary-soft);
-  box-shadow: inset 3px 0 0 var(--primary);
+/* Contador de anexos na tabela */
+.att-count { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 13px; }
+.att-missing { color: var(--danger); font-weight: 700; }
+
+/* ----------------------------- Devolucao por item ----------------------------- */
+.return-intro { margin: 0 0 12px; }
+.return-items {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--surface);
 }
-.mat-option.selected .mat-name { color: var(--primary-dark); }
-
-/* Foco do teclado (opcao ativa) */
-.mat-option.active { outline: 2px solid var(--primary); outline-offset: -2px; }
-
-/* Indisponiveis: visiveis, porem desabilitados */
-.mat-option.unavailable { opacity: 0.55; cursor: not-allowed; }
-.mat-option.unavailable .mat-name { text-decoration: line-through; }
-
-.mat-empty { padding: 18px 12px; text-align: center; color: var(--muted); font-size: 13px; }
+.return-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-weight: 400;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+.return-item:hover { background: var(--surface-2); }
+.return-item input { width: auto; }
+.return-item-name { flex: 1; }
 
 /* ----------------------------- Files report ----------------------------- */
 .files-report { margin: 12px 0; display: flex; flex-direction: column; gap: 8px; }

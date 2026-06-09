@@ -397,7 +397,17 @@ function renderDashboard() {
   const custom = $("#fltCustomRange");
   if (custom) custom.hidden = dashFilters.preset !== "custom";
 
-  const result = window.Analytics.compute(data, dashFilters);
+  // O painel analisa as entradas planas (uma por item de aluguel); as metricas
+  // de "alugueis" deduplicam pelo rental_id dentro do proprio Analytics.
+  const result = window.Analytics.compute(
+    {
+      materials: data.materials,
+      agencies: data.agencies,
+      rentals: data.rentalEntries || [],
+      today: data.today,
+    },
+    dashFilters
+  );
 
   $("#dashNarrative").textContent = result.narrative || "";
   const lbl = $("#fltPeriodLabel");
@@ -988,6 +998,26 @@ function syncSelectOptions(sel, placeholder, items) {
   sel.value = items.some((it) => String(it.value) === prev) ? prev : "";
 }
 
+// Badge da situacao derivada do aluguel (a partir dos itens).
+function rentalBadge(r) {
+  if (r.status === "devolvido") return '<span class="badge badge-ok">Devolvido</span>';
+  if (r.overdue) return '<span class="badge badge-overdue">Atrasado</span>';
+  if (r.status === "parcial") return '<span class="badge badge-partial">Parcial</span>';
+  return '<span class="badge badge-rented">Alugado</span>';
+}
+
+// Lista compacta dos materiais de um aluguel para a tabela.
+function rentalItemsCell(r) {
+  return (r.items || [])
+    .map((it) => {
+      const returned = it.status === "devolvido";
+      const cls = returned ? "rental-item-line returned" : "rental-item-line";
+      const suffix = returned ? ` <span class="muted">(dev. ${fmtDate(it.actual_return_date)})</span>` : "";
+      return `<div class="${cls}"><span class="swatch" style="background:${escapeHtml(it.material_color || DEFAULT_MATERIAL_COLOR)}"></span>${escapeHtml(it.quantity)}x ${escapeHtml(it.material_name)}${suffix}</div>`;
+    })
+    .join("");
+}
+
 function renderRentals() {
   const term = $("#rentalSearch").value.trim().toLowerCase();
   const agencyId = $("#rentalAgencyFilter").value;
@@ -1016,17 +1046,20 @@ function renderRentals() {
   );
 
   const rows = data.rentals.filter((r) => {
+    const items = r.items || [];
     const matchTerm = !term ||
-      r.material_name.toLowerCase().includes(term) ||
+      items.some((it) => it.material_name.toLowerCase().includes(term)) ||
       r.agency_name.toLowerCase().includes(term) ||
+      String(r.event_name || "").toLowerCase().includes(term) ||
       String(r.agency_code || "").toLowerCase().includes(term);
     if (!matchTerm) return false;
 
     if (agencyId && r.agency_id !== agencyId) return false;
     if (agencyCode && !String(r.agency_code || "").toLowerCase().includes(agencyCode)) return false;
-    if (materialId && r.material_id !== materialId) return false;
+    if (materialId && !items.some((it) => it.material_id === materialId)) return false;
 
     if (status === "overdue") { if (!r.overdue) return false; }
+    else if (status === "alugado") { if (r.status !== "alugado" && r.status !== "parcial") return false; }
     else if (status) { if (r.status !== status) return false; }
 
     if (overdueOnly && !r.overdue) return false;
@@ -1048,27 +1081,29 @@ function renderRentals() {
   tbody.innerHTML = rows
     .sort((a, b) => (b.checkout_date || "").localeCompare(a.checkout_date || ""))
     .map((r) => {
-      let badge;
-      if (r.status === "devolvido") badge = '<span class="badge badge-ok">Devolvido</span>';
-      else if (r.overdue) badge = '<span class="badge badge-overdue">Atrasado</span>';
-      else badge = '<span class="badge badge-rented">Alugado</span>';
-
-      const actions = r.status === "alugado"
+      const hasActive = (r.items || []).some((it) => it.status === "alugado");
+      const actions = hasActive
         ? `<button class="btn-link" data-edit-rental="${r.id}">Editar</button>
            <button class="btn-link" data-return-rental="${r.id}">Devolver</button>
            <button class="btn-link danger" data-del-rental="${r.id}">Excluir</button>`
         : `<button class="btn-link" data-edit-rental="${r.id}">Editar</button>
            <button class="btn-link danger" data-del-rental="${r.id}">Excluir</button>`;
 
+      const atts = r.attachments || [];
+      const missing = atts.filter((a) => a.missing).length;
+      const attCell = atts.length
+        ? `<span class="att-count" title="${missing ? `${missing} arquivo(s) nao encontrado(s)` : `${atts.length} anexo(s)`}">${ATTACH_ICON_SVG} ${atts.length}${missing ? ' <span class="att-missing">!</span>' : ""}</span>`
+        : '<span class="muted">-</span>';
+
       return `<tr>
         <td>${escapeHtml(r.agency_code) || "-"}</td>
-        <td>${escapeHtml(r.material_name)}</td>
         <td>${escapeHtml(r.agency_name)}</td>
-        <td>${escapeHtml(r.quantity)}</td>
+        <td>${escapeHtml(r.event_name) || "-"}</td>
+        <td class="rental-items-cell">${rentalItemsCell(r)}</td>
         <td>${fmtDate(r.checkout_date)}</td>
         <td>${fmtDate(r.expected_return_date)}</td>
-        <td>${fmtDate(r.actual_return_date)}</td>
-        <td>${badge}</td>
+        <td>${rentalBadge(r)}</td>
+        <td>${attCell}</td>
         <td class="col-actions">${actions}</td>
       </tr>`;
     })
@@ -1089,26 +1124,29 @@ function clearRentalFilters() {
   renderRentals();
 }
 
-// Rotulos e classificacao dos estados de disponibilidade no periodo.
-const MAT_STATE_LABEL = {
-  available: "Disponivel",
-  limited: "Limitado",
-  unavailable: "Indisponivel",
-};
-
-// Classifica a disponibilidade de um material no periodo:
-//   - "unavailable": nenhuma unidade livre (<= 0).
-//   - "limited": estoque baixo (sobrou pouco em relacao ao total).
-//   - "available": boa disponibilidade.
-function availabilityState(available, total) {
-  if (available <= 0) return "unavailable";
-  if (available < total && available <= Math.max(1, Math.floor(total * 0.34))) return "limited";
-  return "available";
-}
-
 // Icone de calendario usado no botao do date picker.
 const CALENDAR_ICON_SVG =
   '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>';
+
+// Icone de "+" do botao Adicionar outro material.
+const PLUS_ICON_SVG =
+  '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>';
+
+// Icone de clipe (anexos).
+const ATTACH_ICON_SVG =
+  '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>';
+
+// Icone de lixeira (remover item/anexo).
+const TRASH_ICON_SVG =
+  '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>';
+
+// Tamanho de arquivo legivel (anexos).
+function fmtSize(bytes) {
+  const n = Number(bytes) || 0;
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 // Campo de data com:
 //   - input de texto visivel no formato DD/MM/YYYY (digitacao manual);
@@ -1130,8 +1168,6 @@ function brDateField({ label, name, baseId, iso, required }) {
 }
 
 function rentalFormHtml(r = {}) {
-  const isReturned = r.status === "devolvido";
-
   const agencyOptions = data.agencies
     .map((a) => {
       const sel = a.id === r.agency_id ? " selected" : "";
@@ -1140,16 +1176,6 @@ function rentalFormHtml(r = {}) {
     })
     .join("");
 
-  const returnedField = isReturned
-    ? `<div class="field full">
-        ${brDateField({ label: "Data de devolucao", name: "actual_return_date", baseId: "rentalActual", iso: r.actual_return_date, required: false })}
-      </div>`
-    : "";
-
-  // Mostra a busca apenas quando ha materiais suficientes para justificar.
-  const showSearch = data.materials.length > 6;
-
-  // Ordem dos campos: retirada, devolucao prevista, material (lista), quantidade.
   return `
     <div class="form-grid">
       <div class="field">
@@ -1158,19 +1184,6 @@ function rentalFormHtml(r = {}) {
       <div class="field">
         ${brDateField({ label: "Devolucao prevista *", name: "expected_return_date", baseId: "rentalReturn", iso: r.expected_return_date || data.today, required: true })}
       </div>
-      <div class="field full">
-        <label id="matPickerLabel">Material *</label>
-        <input type="hidden" name="material_id" id="rentalMaterial" value="${escapeHtml(r.material_id || "")}" />
-        <div class="mat-picker">
-          ${showSearch ? `<input type="search" id="matSearch" class="mat-search" placeholder="Buscar material por nome..." autocomplete="off" />` : ""}
-          <div class="mat-list" id="matList" role="listbox" aria-labelledby="matPickerLabel" tabindex="0" aria-activedescendant=""></div>
-        </div>
-        <div class="hint" id="availHint"></div>
-      </div>
-      <div class="field">
-        <label for="rentalQty">Quantidade *</label>
-        <input name="quantity" id="rentalQty" type="number" min="1" step="1" value="${escapeHtml(r.quantity ?? 1)}" required />
-      </div>
       <div class="field">
         <label for="rentalAgency">Agencia *</label>
         <select name="agency_id" id="rentalAgency" required>
@@ -1178,7 +1191,26 @@ function rentalFormHtml(r = {}) {
           ${agencyOptions}
         </select>
       </div>
-      ${returnedField}
+      <div class="field">
+        <label for="rentalEvent">Nome do evento</label>
+        <input name="event_name" id="rentalEvent" value="${escapeHtml(r.event_name)}" placeholder="Ex.: Feira do Agronegocio" maxlength="120" />
+      </div>
+      <div class="field full">
+        <label>Materiais do aluguel *</label>
+        <div id="rentalItemsList" class="rental-items"></div>
+        <button type="button" class="btn btn-sm add-item-btn" id="addItemBtn">${PLUS_ICON_SVG} Adicionar outro material</button>
+        <div class="hint" id="itemsHint"></div>
+      </div>
+      <div class="field full">
+        <label>Resumo</label>
+        <div id="rentalSummary" class="rental-summary"></div>
+      </div>
+      <div class="field full">
+        <label>Anexos</label>
+        <div id="attachList" class="attach-list"></div>
+        <button type="button" class="btn btn-sm" id="addAttachBtn">${ATTACH_ICON_SVG} Adicionar anexos...</button>
+        <div class="hint">Limite de 25 MB por arquivo. Tipos permitidos: pdf, imagens, Word/Excel/PowerPoint, txt, csv, zip.</div>
+      </div>
       <div class="field full">
         <label for="rentalNotes">Observacoes</label>
         <textarea name="notes" id="rentalNotes">${escapeHtml(r.notes)}</textarea>
@@ -1191,13 +1223,36 @@ function openRentalForm(rental) {
   if (!data.agencies.length) return toast("Cadastre uma agencia antes.", "warn");
 
   const editing = !!rental;
+  let rowSeq = 0;
+
+  // Estado dos itens do formulario. Itens ja devolvidos sao mantidos no estado
+  // (serao reenviados intactos), porem ficam travados na interface.
+  const itemRows = editing
+    ? rental.items.map((it) => ({
+        uid: ++rowSeq,
+        id: it.id,
+        material_id: it.material_id,
+        quantity: Number(it.quantity) || 1,
+        status: it.status,
+        actual_return_date: it.actual_return_date || "",
+      }))
+    : [{ uid: ++rowSeq, id: "", material_id: "", quantity: 1, status: "alugado", actual_return_date: "" }];
+
+  // Anexos: pendentes (criacao; copiados so ao salvar) e existentes (edicao;
+  // adicionados/removidos imediatamente via IPC).
+  const pendingFiles = [];
+  let existingAtts = editing ? [...(rental.attachments || [])] : [];
+
+  let availMap = null; // { materialId: disponivel } ou null enquanto sem periodo
+  let loading = false;
+
   openModal(
     editing ? "Editar aluguel" : "Novo aluguel",
     rentalFormHtml(rental || {}),
     async () => {
       const v = formValues();
-      // Defesa adicional na interface: o backend revalida tudo, mas evitamos
-      // chamadas obviamente invalidas e damos retorno imediato ao usuario.
+      // Defesa adicional na interface: o backend revalida tudo sob o lock, mas
+      // evitamos chamadas obviamente invalidas e damos retorno imediato.
       if (!DateUtils.isValidISO(v.checkout_date)) {
         showModalError("Informe uma data de retirada valida (dd/mm/aaaa).");
         return { ok: false };
@@ -1210,41 +1265,63 @@ function openRentalForm(rental) {
         showModalError("A devolucao prevista nao pode ser anterior a retirada.");
         return { ok: false };
       }
-      if (!v.material_id) {
-        showModalError("Selecione um material disponivel no periodo.");
+      if (!v.agency_id) {
+        showModalError("Selecione uma agencia.");
         return { ok: false };
       }
-      if (editing) {
-        v.id = rental.id;
-        v._baseline = rental;
-        return await handleResult(window.api.updateRental(v), "Aluguel atualizado.");
+      if (itemRows.some((row) => row.status !== "devolvido" && !row.material_id)) {
+        showModalError("Selecione o material de todos os itens (ou remova os itens vazios).");
+        return { ok: false };
       }
-      return await handleResult(window.api.createRental(v), "Aluguel registrado.");
+      if (itemRows.some((row) => !(Number(row.quantity) >= 1))) {
+        showModalError("As quantidades devem ser numeros inteiros maiores ou iguais a 1.");
+        return { ok: false };
+      }
+      const ids = itemRows.map((row) => row.material_id).filter(Boolean);
+      if (new Set(ids).size !== ids.length) {
+        showModalError("O mesmo material aparece em mais de um item. Ajuste a quantidade no item ja existente.");
+        return { ok: false };
+      }
+
+      const payload = {
+        agency_id: v.agency_id,
+        event_name: v.event_name,
+        checkout_date: v.checkout_date,
+        expected_return_date: v.expected_return_date,
+        notes: v.notes,
+        items: itemRows.map((row) => ({
+          id: row.id,
+          material_id: row.material_id,
+          quantity: Number(row.quantity),
+        })),
+      };
+
+      if (editing) {
+        payload.id = rental.id;
+        payload._baseline = rental;
+        return await handleResult(window.api.updateRental(payload), "Aluguel atualizado.");
+      }
+      payload.attachments = pendingFiles.map((f) => ({ path: f.path, name: f.name }));
+      return await handleResult(window.api.createRental(payload), "Aluguel registrado.");
     },
     editing ? "Salvar" : "Registrar"
   );
 
-  // A lista de materiais so calcula a disponibilidade depois que o periodo
-  // (retirada + devolucao prevista) for valido. O calculo roda no processo
-  // principal, considerando todo o intervalo informado.
   const checkoutH = $("#rentalCheckout");
   const returnH = $("#rentalReturn");
   const checkoutV = $("#rentalCheckoutBR");
   const returnV = $("#rentalReturnBR");
-  const matHidden = $("#rentalMaterial");
-  const matList = $("#matList");
-  const matSearch = $("#matSearch");
-  const qtyInput = $("#rentalQty");
-  const hint = $("#availHint");
+  const agencySel = $("#rentalAgency");
+  const itemsList = $("#rentalItemsList");
+  const itemsHint = $("#itemsHint");
+  const summaryEl = $("#rentalSummary");
+  const attachListEl = $("#attachList");
   const excludeId = editing ? rental.id : null;
-
-  let availMap = null; // { materialId: disponivel } ou null enquanto sem periodo
-  let loading = false;
-  let activeId = ""; // opcao em foco para navegacao por teclado
 
   initDateInputs($("#modalBody"));
 
-  const getSelected = () => matHidden.value || "";
+  const materialById = new Map(data.materials.map((m) => [m.id, m]));
+  const materialsSorted = [...data.materials].sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
 
   // Estado do periodo informado, para escolher a mensagem correta.
   const periodStatus = () => {
@@ -1260,154 +1337,278 @@ function openRentalForm(rental) {
     return "ok";
   };
 
-  // Monta a lista de materiais ordenada (disponiveis primeiro) com seus estados.
-  const buildItems = () => {
-    const term = (matSearch?.value || "").trim().toLowerCase();
-    let items = data.materials.map((m) => {
-      const total = Number(m.total_quantity) || 0;
-      const available = availMap ? Number(availMap[m.id] ?? 0) : 0;
-      return { m, total, available, state: availabilityState(available, total) };
-    });
-    if (term) items = items.filter((x) => x.m.name.toLowerCase().includes(term));
-    items.sort((a, b) => {
-      const aUnav = a.state === "unavailable" ? 1 : 0;
-      const bUnav = b.state === "unavailable" ? 1 : 0;
-      if (aUnav !== bUnav) return aUnav - bUnav; // disponiveis antes dos indisponiveis
-      return a.m.name.localeCompare(b.m.name, "pt-BR");
-    });
-    return items;
-  };
+  const availOf = (materialId) => (availMap ? Number(availMap[materialId] ?? 0) : null);
 
-  const optionHtml = ({ m, total, available, state }) => {
-    const color = m.color || DEFAULT_MATERIAL_COLOR;
-    const selected = m.id === getSelected();
-    const disabled = state === "unavailable";
-    const active = m.id === activeId;
-    const classes = ["mat-option", state];
-    if (selected) classes.push("selected");
-    if (active) classes.push("active");
-    return `<div class="${classes.join(" ")}" id="matopt-${escapeHtml(m.id)}" role="option" data-id="${escapeHtml(m.id)}"
-      aria-selected="${selected}" aria-disabled="${disabled}">
-      <span class="mat-swatch" style="background:${escapeHtml(color)}"></span>
-      <span class="mat-name">${escapeHtml(m.name)}</span>
-      <span class="mat-counts"><strong>${Math.max(0, available)}</strong> de ${total} disp.</span>
-      <span class="mat-state-badge ${state}">${MAT_STATE_LABEL[state]}</span>
+  // ------------------------- Itens (materiais) -------------------------
+
+  const activeRows = () => itemRows.filter((row) => row.status !== "devolvido");
+
+  const itemRowHtml = (row) => {
+    if (row.status === "devolvido") {
+      const m = materialById.get(row.material_id);
+      return `<div class="rental-item-row returned" data-uid="${row.uid}">
+        <span class="rental-item-locked">
+          <span class="swatch" style="background:${escapeHtml(m?.color || DEFAULT_MATERIAL_COLOR)}"></span>
+          ${escapeHtml(row.quantity)}x ${escapeHtml(m?.name || "(material removido)")}
+        </span>
+        <span class="badge badge-ok">Devolvido em ${fmtDate(row.actual_return_date)}</span>
+      </div>`;
+    }
+
+    const ready = periodStatus() === "ok" && availMap && !loading;
+    const usedByOthers = new Set(
+      itemRows.filter((r2) => r2.uid !== row.uid && r2.material_id).map((r2) => r2.material_id)
+    );
+    const options = materialsSorted
+      .map((m) => {
+        const av = availOf(m.id);
+        const isSelected = row.material_id === m.id;
+        const duplicated = usedByOthers.has(m.id);
+        const noStock = av !== null && av <= 0 && !isSelected;
+        const disabled = duplicated || noStock ? " disabled" : "";
+        let suffix = "";
+        if (duplicated) suffix = " (ja adicionado)";
+        else if (av !== null) suffix = ` — ${Math.max(0, av)} de ${Number(m.total_quantity) || 0} disp.`;
+        return `<option value="${escapeHtml(m.id)}"${isSelected ? " selected" : ""}${disabled}>${escapeHtml(m.name)}${escapeHtml(suffix)}</option>`;
+      })
+      .join("");
+
+    const av = row.material_id ? availOf(row.material_id) : null;
+    const maxAttr = av !== null && av > 0 ? ` max="${av}"` : "";
+    const removable = activeRows().length > 1;
+    let rowHint = "";
+    if (row.material_id && av !== null) {
+      rowHint =
+        av <= 0
+          ? `<span class="rental-item-avail warn">Indisponivel no periodo</span>`
+          : `<span class="rental-item-avail">Disponivel no periodo: <strong>${av}</strong></span>`;
+    }
+
+    return `<div class="rental-item-row" data-uid="${row.uid}">
+      <select data-item-material aria-label="Material" ${ready ? "" : "disabled"}>
+        <option value="">Selecione o material...</option>
+        ${options}
+      </select>
+      <input data-item-qty type="number" min="1" step="1"${maxAttr} value="${escapeHtml(row.quantity)}" aria-label="Quantidade" ${ready ? "" : "disabled"} />
+      <button type="button" class="icon-btn-light danger" data-item-remove title="Remover item" aria-label="Remover item" ${removable ? "" : "disabled"}>${TRASH_ICON_SVG}</button>
+      ${rowHint}
     </div>`;
   };
 
-  const emptyMsg = (text) => `<div class="mat-empty">${escapeHtml(text)}</div>`;
+  const renderItems = () => {
+    itemsList.innerHTML = itemRows.map(itemRowHtml).join("");
 
-  const renderList = () => {
     const status = periodStatus();
+    itemsHint.className = "hint";
     if (status === "incomplete") {
-      matList.innerHTML = emptyMsg("Informe a retirada e a devolucao prevista para ver os materiais disponiveis no periodo.");
-      return;
-    }
-    if (status === "invalid") {
-      matList.innerHTML = emptyMsg("Data invalida. Use o formato dd/mm/aaaa (ex.: 31/12/2026).");
-      return;
-    }
-    if (status === "order") {
-      matList.innerHTML = emptyMsg("A devolucao prevista nao pode ser anterior a retirada.");
-      return;
-    }
-    if (loading) {
-      matList.innerHTML = emptyMsg("Calculando disponibilidade no periodo...");
-      return;
-    }
-    if (!data.materials.length) {
-      matList.innerHTML = emptyMsg("Nenhum material cadastrado.");
-      return;
-    }
-    const items = buildItems();
-    if (!items.length) {
-      matList.innerHTML = emptyMsg("Nenhum material encontrado para a busca.");
-      return;
-    }
-    matList.innerHTML = items.map(optionHtml).join("");
-    matList.setAttribute("aria-activedescendant", activeId ? `matopt-${activeId}` : "");
-  };
-
-  const updateHint = () => {
-    const status = periodStatus();
-    if (status !== "ok") {
-      hint.className = "hint";
-      if (status === "invalid") hint.className = "hint warn";
-      if (status === "order") hint.className = "hint warn";
-      hint.textContent =
-        status === "invalid"
-          ? "Verifique as datas informadas (formato dd/mm/aaaa)."
-          : status === "order"
-          ? "A devolucao prevista nao pode ser anterior a retirada."
-          : "Informe o periodo para liberar a selecao de materiais.";
-      return;
-    }
-    const id = getSelected();
-    if (!id) {
-      hint.className = "hint";
-      hint.textContent = "Selecione um material para registrar o aluguel.";
-      return;
-    }
-    const av = availMap ? Number(availMap[id] ?? 0) : 0;
-    if (av <= 0) {
-      hint.className = "hint warn";
-      hint.textContent = "Sem unidades disponiveis neste periodo para o material selecionado.";
+      itemsHint.textContent = "Informe a retirada e a devolucao prevista para ver a disponibilidade dos materiais.";
+    } else if (status === "invalid") {
+      itemsHint.className = "hint warn";
+      itemsHint.textContent = "Verifique as datas informadas (formato dd/mm/aaaa).";
+    } else if (status === "order") {
+      itemsHint.className = "hint warn";
+      itemsHint.textContent = "A devolucao prevista nao pode ser anterior a retirada.";
+    } else if (loading) {
+      itemsHint.textContent = "Calculando disponibilidade no periodo...";
     } else {
-      hint.className = "hint";
-      hint.innerHTML = `Disponivel no periodo: <strong>${av}</strong> unidade(s). Quantidade maxima: ${av}.`;
+      itemsHint.textContent = "A disponibilidade considera todos os alugueis ativos no periodo selecionado.";
     }
   };
 
-  // Aplica o limite de quantidade conforme a disponibilidade do material.
-  const applyQtyMax = () => {
-    const id = getSelected();
-    const av = availMap ? Number(availMap[id] ?? 0) : 0;
-    if (id && av > 0) {
-      qtyInput.max = String(av);
-      if (Number(qtyInput.value) > av) qtyInput.value = String(av);
+  // Resumo dos itens antes da confirmacao.
+  const renderSummary = () => {
+    const parts = [];
+    for (const row of itemRows) {
+      if (!row.material_id) continue;
+      const m = materialById.get(row.material_id);
+      const returned = row.status === "devolvido" ? " (devolvido)" : "";
+      parts.push(`<li>${escapeHtml(row.quantity)}x ${escapeHtml(m?.name || "(material removido)")}${returned}</li>`);
+    }
+    const period =
+      DateUtils.isValidISO(checkoutH.value) && DateUtils.isValidISO(returnH.value)
+        ? `Retirada em <strong>${fmtDate(checkoutH.value)}</strong>, devolucao prevista em <strong>${fmtDate(returnH.value)}</strong>.`
+        : "";
+    const agency = agencySel.selectedOptions[0]?.value
+      ? `Agencia: <strong>${escapeHtml(agencySel.selectedOptions[0].textContent)}</strong>. `
+      : "";
+    summaryEl.innerHTML = parts.length
+      ? `<ul class="rental-summary-list">${parts.join("")}</ul><div class="rental-summary-meta">${agency}${period}</div>`
+      : `<span class="muted">Nenhum material selecionado ainda.</span>`;
+  };
+
+  const rerender = () => {
+    renderItems();
+    renderSummary();
+  };
+
+  // Delegacao de eventos da lista de itens (os elementos sao recriados a cada
+  // render; o estado vive em itemRows).
+  itemsList.addEventListener("change", (e) => {
+    const rowEl = e.target.closest(".rental-item-row");
+    if (!rowEl) return;
+    const row = itemRows.find((r2) => String(r2.uid) === rowEl.dataset.uid);
+    if (!row) return;
+    if (e.target.matches("[data-item-material]")) {
+      row.material_id = e.target.value;
+      const av = availOf(row.material_id);
+      if (av !== null && av > 0 && row.quantity > av) row.quantity = av;
+      rerender();
+    } else if (e.target.matches("[data-item-qty]")) {
+      const n = Math.floor(Number(e.target.value));
+      row.quantity = Number.isFinite(n) && n >= 1 ? n : 1;
+      const av = row.material_id ? availOf(row.material_id) : null;
+      if (av !== null && av > 0 && row.quantity > av) row.quantity = av;
+      rerender();
+    }
+  });
+  itemsList.addEventListener("input", (e) => {
+    if (!e.target.matches("[data-item-qty]")) return;
+    const rowEl = e.target.closest(".rental-item-row");
+    const row = rowEl && itemRows.find((r2) => String(r2.uid) === rowEl.dataset.uid);
+    if (!row) return;
+    const n = Math.floor(Number(e.target.value));
+    if (Number.isFinite(n) && n >= 1) {
+      row.quantity = n;
+      renderSummary();
+    }
+  });
+  itemsList.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-item-remove]");
+    if (!btn || btn.disabled) return;
+    const rowEl = btn.closest(".rental-item-row");
+    const idx = itemRows.findIndex((r2) => String(r2.uid) === rowEl.dataset.uid);
+    if (idx === -1) return;
+    if (activeRows().length <= 1) return; // mantem pelo menos um item
+    itemRows.splice(idx, 1);
+    rerender();
+  });
+
+  $("#addItemBtn").addEventListener("click", () => {
+    itemRows.push({ uid: ++rowSeq, id: "", material_id: "", quantity: 1, status: "alugado", actual_return_date: "" });
+    rerender();
+    const selects = itemsList.querySelectorAll("[data-item-material]");
+    if (selects.length) selects[selects.length - 1].focus();
+  });
+
+  // ------------------------------ Anexos ------------------------------
+
+  const renderAttachments = () => {
+    const rowsHtml = [];
+    for (const a of existingAtts) {
+      const missing = a.missing
+        ? `<span class="att-missing-badge" title="Arquivo nao encontrado na pasta de dados">arquivo ausente</span>`
+        : "";
+      rowsHtml.push(`<div class="attach-row" data-att-id="${escapeHtml(a.id)}">
+        ${ATTACH_ICON_SVG}
+        <span class="attach-name" title="${escapeHtml(a.file_name)}">${escapeHtml(a.file_name)}</span>
+        <span class="attach-size">${fmtSize(a.size)}</span>
+        ${missing}
+        <button type="button" class="btn-link" data-att-open="${escapeHtml(a.id)}" ${a.missing ? "disabled" : ""}>Abrir</button>
+        <button type="button" class="btn-link danger" data-att-remove="${escapeHtml(a.id)}">Remover</button>
+      </div>`);
+    }
+    pendingFiles.forEach((f, i) => {
+      rowsHtml.push(`<div class="attach-row pending">
+        ${ATTACH_ICON_SVG}
+        <span class="attach-name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</span>
+        <span class="attach-size">${fmtSize(f.size)}</span>
+        <span class="attach-pending-badge">sera copiado ao salvar</span>
+        <button type="button" class="btn-link danger" data-att-pending-remove="${i}">Remover</button>
+      </div>`);
+    });
+    attachListEl.innerHTML = rowsHtml.length
+      ? rowsHtml.join("")
+      : `<span class="muted">Nenhum anexo.</span>`;
+  };
+
+  $("#addAttachBtn").addEventListener("click", async () => {
+    const res = await window.api.pickAttachments();
+    if (!res || res.canceled || !res.ok) return;
+    const valid = [];
+    for (const f of res.files || []) {
+      if (!f.valid) {
+        toast(f.message || `Arquivo nao permitido: ${f.name}`, "warn");
+        continue;
+      }
+      valid.push(f);
+    }
+    if (!valid.length) return;
+
+    if (editing) {
+      // Aluguel ja existe: copia imediatamente.
+      const out = await window.api.addAttachments({
+        rental_id: rental.id,
+        files: valid.map((f) => ({ path: f.path, name: f.name })),
+      });
+      if (out && out.ok === false) {
+        toast(out.message || "Falha ao adicionar anexos.", "error");
+        return;
+      }
+      existingAtts = [...existingAtts, ...((out && out.attachments) || [])];
+      renderAttachments();
+      toast("Anexo(s) adicionado(s).", "success");
+      loadAll();
     } else {
-      qtyInput.removeAttribute("max");
+      for (const f of valid) {
+        if (!pendingFiles.some((p) => p.path === f.path)) pendingFiles.push(f);
+      }
+      renderAttachments();
     }
-  };
+  });
 
-  const selectMaterial = (id) => {
-    matHidden.value = id;
-    activeId = id;
-    renderList();
-    applyQtyMax();
-    updateHint();
-  };
+  attachListEl.addEventListener("click", async (e) => {
+    const openId = e.target.closest("[data-att-open]")?.getAttribute("data-att-open");
+    if (openId) {
+      const res = await window.api.openAttachment(openId);
+      if (res && res.ok === false) {
+        toast(res.message || "Nao foi possivel abrir o anexo.", "error");
+        if (res.code === "MISSING") {
+          existingAtts = existingAtts.map((a) => (a.id === openId ? { ...a, missing: true } : a));
+          renderAttachments();
+        }
+      }
+      return;
+    }
 
-  // Lista de ids habilitados, na ordem exibida (para navegacao por teclado).
-  const enabledIdsInOrder = () =>
-    Array.from(matList.querySelectorAll('.mat-option:not(.unavailable)')).map((el) => el.dataset.id);
+    const removeId = e.target.closest("[data-att-remove]")?.getAttribute("data-att-remove");
+    if (removeId) {
+      const att = existingAtts.find((a) => a.id === removeId);
+      confirmDialog(
+        `Remover o anexo "${att?.file_name}"? O arquivo sera excluido da pasta de dados.`,
+        async () => {
+          const res = await window.api.removeAttachment(removeId);
+          if (res && res.ok === false) {
+            toast(res.message || "Falha ao remover o anexo.", "error");
+            return;
+          }
+          existingAtts = existingAtts.filter((a) => a.id !== removeId);
+          renderAttachments();
+          toast("Anexo removido.", "success");
+          loadAll();
+        },
+        { title: "Remover anexo", okLabel: "Remover" }
+      );
+      return;
+    }
 
-  const moveActive = (delta) => {
-    const ids = enabledIdsInOrder();
-    if (!ids.length) return;
-    const cur = ids.indexOf(activeId);
-    let next = cur + delta;
-    if (cur === -1) next = delta > 0 ? 0 : ids.length - 1;
-    next = Math.max(0, Math.min(ids.length - 1, next));
-    activeId = ids[next];
-    renderList();
-    const el = document.getElementById(`matopt-${activeId}`);
-    if (el) el.scrollIntoView({ block: "nearest" });
-  };
+    const pendingIdx = e.target.closest("[data-att-pending-remove]")?.getAttribute("data-att-pending-remove");
+    if (pendingIdx !== undefined && pendingIdx !== null) {
+      pendingFiles.splice(Number(pendingIdx), 1);
+      renderAttachments();
+    }
+  });
+
+  // --------------------------- Disponibilidade ---------------------------
 
   const refreshAvailability = async () => {
-    activeId = activeId || getSelected();
     if (periodStatus() !== "ok") {
       availMap = null;
       loading = false;
-      renderList();
-      applyQtyMax();
-      updateHint();
+      rerender();
       return;
     }
     loading = true;
-    renderList();
-    updateHint();
+    rerender();
     try {
       const res = await window.api.getAvailability({
         checkout_date: checkoutH.value,
@@ -1419,60 +1620,80 @@ function openRentalForm(rental) {
       availMap = {};
     }
     loading = false;
-    renderList();
-    applyQtyMax();
-    updateHint();
+    // Reaplica os limites de quantidade com a nova disponibilidade.
+    for (const row of activeRows()) {
+      const av = row.material_id ? availOf(row.material_id) : null;
+      if (av !== null && av > 0 && row.quantity > av) row.quantity = av;
+    }
+    rerender();
   };
 
   // Recalcula imediatamente quando qualquer uma das datas muda. Os eventos sao
   // disparados pelo input oculto (ISO) via initDateInputs.
   checkoutH.addEventListener("change", refreshAvailability);
   returnH.addEventListener("change", refreshAvailability);
+  agencySel.addEventListener("change", renderSummary);
 
-  if (matSearch) matSearch.addEventListener("input", renderList);
-
-  matList.addEventListener("click", (e) => {
-    const opt = e.target.closest(".mat-option");
-    if (!opt || opt.classList.contains("unavailable")) return;
-    selectMaterial(opt.dataset.id);
-    matList.focus();
-  });
-
-  matList.addEventListener("keydown", (e) => {
-    switch (e.key) {
-      case "ArrowDown":
-        e.preventDefault();
-        moveActive(1);
-        break;
-      case "ArrowUp":
-        e.preventDefault();
-        moveActive(-1);
-        break;
-      case "Home":
-        e.preventDefault();
-        moveActive(-Infinity);
-        break;
-      case "End":
-        e.preventDefault();
-        moveActive(Infinity);
-        break;
-      case "Enter":
-      case " ":
-        if (activeId) {
-          e.preventDefault();
-          const el = document.getElementById(`matopt-${activeId}`);
-          if (el && !el.classList.contains("unavailable")) selectMaterial(activeId);
-        }
-        break;
-      default:
-        break;
-    }
-  });
+  renderAttachments();
 
   // Recalcula a disponibilidade inicial e, so entao, registra o estado "limpo"
   // do formulario (apos eventuais ajustes automaticos, como o limite de
   // quantidade), para que abrir uma edicao sem mexer em nada nao gere alerta.
   refreshAvailability().then(markModalPristine);
+}
+
+// ----------------------------- Devolucao (por item) -----------------------------
+
+// Dialogo de devolucao: permite devolver todos os itens pendentes ou apenas
+// parte deles, registrando a data de devolucao em cada item.
+function openReturnForm(rental) {
+  const activeItems = (rental.items || []).filter((it) => it.status === "alugado");
+  if (!activeItems.length) return toast("Este aluguel ja foi totalmente devolvido.", "warn");
+
+  const itemsHtml = activeItems
+    .map(
+      (it) => `<label class="return-item">
+        <input type="checkbox" data-return-item value="${escapeHtml(it.id)}" checked />
+        <span class="swatch" style="background:${escapeHtml(it.material_color || DEFAULT_MATERIAL_COLOR)}"></span>
+        <span class="return-item-name">${escapeHtml(it.quantity)}x ${escapeHtml(it.material_name)}</span>
+      </label>`
+    )
+    .join("");
+
+  const eventInfo = rental.event_name ? ` — ${rental.event_name}` : "";
+  const bodyHtml = `
+    <p class="muted return-intro">${escapeHtml(agencyLabel(rental))}${escapeHtml(eventInfo)}</p>
+    <div class="field full">
+      <label>Itens a devolver</label>
+      <div class="return-items">${itemsHtml}</div>
+      <div class="hint">Desmarque os itens que ainda ficam com a agencia (devolucao parcial).</div>
+    </div>
+    <div class="field">
+      ${brDateField({ label: "Data de devolucao *", name: "actual_return_date", baseId: "returnDate", iso: data.today, required: true })}
+    </div>`;
+
+  openModal(
+    "Registrar devolucao",
+    bodyHtml,
+    async () => {
+      const selected = $$("#modalBody [data-return-item]:checked").map((el) => el.value);
+      if (!selected.length) {
+        showModalError("Selecione pelo menos um item para devolver.");
+        return { ok: false };
+      }
+      const dateIso = $("#returnDate").value;
+      if (!DateUtils.isValidISO(dateIso)) {
+        showModalError("Informe uma data de devolucao valida (dd/mm/aaaa).");
+        return { ok: false };
+      }
+      return await handleResult(
+        window.api.returnRental({ id: rental.id, item_ids: selected, actual_return_date: dateIso }),
+        "Devolucao registrada."
+      );
+    },
+    "Devolver"
+  );
+  initDateInputs($("#modalBody"));
 }
 
 // ----------------------------- Calendario -----------------------------
@@ -1498,10 +1719,11 @@ function startOfWeek(d) {
   return x;
 }
 
-// Alugueis que ocupam um determinado dia (entre retirada e devolucao).
+// Itens de aluguel que ocupam um determinado dia (entre retirada e devolucao).
+// Trabalha sobre as entradas planas (uma por item/material) do snapshot.
 // Comparacao lexicografica de strings YYYY-MM-DD funciona como ordem cronologica.
 function rentalsOnDay(iso) {
-  return data.rentals.filter((r) => {
+  return (data.rentalEntries || []).filter((r) => {
     const start = r.checkout_date;
     if (!start) return false;
     const end =
@@ -1574,7 +1796,8 @@ function renderCalendar() {
         .slice(0, maxChips)
         .map((r) => {
           const codeStr = String(r.agency_code || "").trim();
-          const tip = `${codeStr ? `[${codeStr}] ` : ""}${r.agency_name} - ${r.material_name} (${fmtDate(
+          const eventStr = String(r.event_name || "").trim();
+          const tip = `${codeStr ? `[${codeStr}] ` : ""}${r.agency_name}${eventStr ? ` - ${eventStr}` : ""} - ${r.material_name} (${fmtDate(
             r.checkout_date
           )} ate ${fmtDate(r.expected_return_date)})`;
           const color = materialColorOf(r.material_id);
@@ -1651,7 +1874,7 @@ function openDayModal(iso) {
                 <span class="day-qty">${escapeHtml(r.quantity)}x</span>
                 ${statusBadge(r)}
               </div>
-              <div class="day-meta">${escapeHtml(agencyLabel(r))}</div>
+              <div class="day-meta">${escapeHtml(agencyLabel(r))}${r.event_name ? ` &middot; ${escapeHtml(r.event_name)}` : ""}</div>
               <div class="day-dates">
                 <span>Retirada: <strong>${fmtDate(r.checkout_date)}</strong></span>
                 <span>Devolucao prevista: <strong>${fmtDate(r.expected_return_date)}</strong></span>
@@ -1678,7 +1901,13 @@ async function loadSettings() {
 
 function renderFilesReport(report, paths) {
   const container = $("#filesReport");
-  const labels = { materials: "Materiais", agencies: "Agencias", rentals: "Alugueis" };
+  const labels = {
+    materials: "Materiais",
+    agencies: "Agencias",
+    rentals: "Alugueis",
+    rentalItems: "Itens de aluguel",
+    attachments: "Anexos (metadados)",
+  };
   const keys = Object.keys(paths || (report || {}));
   container.innerHTML = keys
     .map((k) => {
@@ -1878,17 +2107,17 @@ function bindEvents() {
     const retRent = t.getAttribute("data-return-rental");
     if (retRent) {
       const r = data.rentals.find((x) => x.id === retRent);
-      return confirmDialog(
-        `Marcar como devolvido: ${r?.quantity}x ${r?.material_name} (${r?.agency_name})?`,
-        () => handleResult(window.api.returnRental({ id: retRent }), "Devolucao registrada."),
-        { title: "Confirmar devolucao", okLabel: "Devolver" }
-      );
+      if (r) openReturnForm(r);
+      return;
     }
 
     const delRent = t.getAttribute("data-del-rental");
     if (delRent) {
-      return confirmDialog("Excluir este registro de aluguel do historico?", () =>
-        handleResult(window.api.deleteRental(delRent), "Registro excluido.")
+      const r = data.rentals.find((x) => x.id === delRent);
+      const hasAtts = (r?.attachments || []).length > 0;
+      return confirmDialog(
+        `Excluir este registro de aluguel do historico?${hasAtts ? " Os anexos tambem serao excluidos." : ""}`,
+        () => handleResult(window.api.deleteRental(delRent), "Registro excluido.")
       );
     }
   });

@@ -130,6 +130,33 @@
     return iso && iso >= from && iso <= to;
   }
 
+  // ----------------------------- Agrupamento por aluguel ---------------------
+
+  // As entradas recebidas sao UMA POR ITEM (material) de aluguel, com
+  // rental_id apontando para o aluguel principal. Para metricas de "alugueis"
+  // (reservas), deduplicamos pelo rental_id somando as quantidades; para
+  // metricas por material/item, usamos as entradas originais.
+  function bookingKey(r) {
+    return r.rental_id || r.id;
+  }
+
+  function dedupeBookings(entries) {
+    const map = new Map();
+    for (const r of entries) {
+      const key = bookingKey(r);
+      const ex = map.get(key);
+      if (!ex) {
+        map.set(key, { ...r, quantity: Number(r.quantity) || 0 });
+      } else {
+        ex.quantity += Number(r.quantity) || 0;
+        if (r.overdue) ex.overdue = true;
+        // O aluguel e considerado ativo enquanto qualquer item estiver ativo.
+        if (r.status === STATUS.RENTED) ex.status = STATUS.RENTED;
+      }
+    }
+    return Array.from(map.values());
+  }
+
   // ----------------------------- Filtragem ----------------------------------
 
   // Aplica filtros de agencia/material/situacao a uma lista de alugueis.
@@ -260,24 +287,27 @@
     const agencyById = new Map(agencies.map((a) => [a.id, a]));
 
     const matching = applyEntityFilters(allRentals, filters);
+    // Visao por aluguel (reserva): uma linha por rental_id, quantidades somadas.
+    const matchingBookings = dedupeBookings(matching);
 
     // ----- Perfis + segmentos (usados apenas pelos insights) -----
-    const profilesAll = computeAgencyProfiles(matching, agencies, agencyById, today);
+    const profilesAll = computeAgencyProfiles(matchingBookings, agencies, agencyById, today);
     const segments = computeSegments(profilesAll);
     const profiles = segments.agencies;
 
     // ----- Conjuntos por janela -----
     const inPeriod = matching.filter((r) => inRange(r.checkout_date, period.from, period.to));
-    const inPrev =
+    const bookingsInPeriod = matchingBookings.filter((r) => inRange(r.checkout_date, period.from, period.to));
+    const bookingsInPrev =
       period.prevFrom && period.prevTo
-        ? matching.filter((r) => inRange(r.checkout_date, period.prevFrom, period.prevTo))
+        ? matchingBookings.filter((r) => inRange(r.checkout_date, period.prevFrom, period.prevTo))
         : null;
 
     // ----- KPIs -----
-    const kpis = computeKpis(matching, inPeriod, inPrev, period, today);
+    const kpis = computeKpis(matching, bookingsInPeriod, bookingsInPrev, period, today);
 
     // ----- Series de tendencia -----
-    const trends = computeTrends(matching, period, today);
+    const trends = computeTrends(matching, matchingBookings, period, today);
 
     // sparklines: usa as series por bucket (preenche o KPI)
     kpis.sparks = {
@@ -288,13 +318,13 @@
     };
 
     // ----- Engajamento da base de agencias (base fixa) -----
-    const engagement = computeEngagement(profiles, inPeriod);
+    const engagement = computeEngagement(profiles, bookingsInPeriod);
 
     // ----- Sazonalidade (mes x dia da semana) -----
-    const seasonality = computeSeasonality(matching);
+    const seasonality = computeSeasonality(matchingBookings);
 
     // ----- Top agencias no periodo -----
-    const topAgencies = computeTopAgencies(inPeriod, agencyById);
+    const topAgencies = computeTopAgencies(bookingsInPeriod, agencyById);
 
     // ----- Desempenho de materiais -----
     const materialsPerf = computeMaterials(matching, inPeriod, materials, materialById, period, today);
@@ -316,7 +346,7 @@
       .slice(0, 12);
 
     // ----- Anomalias -----
-    const anomalies = computeAnomalies(matching, period, today);
+    const anomalies = computeAnomalies(matching, matchingBookings, period, today);
 
     // ----- Recomendacoes + narrativa -----
     const insights = buildInsights({
@@ -391,9 +421,11 @@
     return durations.length ? median(durations) : 0;
   }
 
-  function computeKpis(matching, inPeriod, inPrev, period, today) {
-    const cur = periodMetrics(inPeriod, today);
-    const prev = inPrev ? periodMetrics(inPrev, today) : null;
+  // bookingsInPeriod/bookingsInPrev: visao por aluguel (deduplicada);
+  // matching: entradas por item (para taxa de atraso e duracao por item).
+  function computeKpis(matching, bookingsInPeriod, bookingsInPrev, period, today) {
+    const cur = periodMetrics(bookingsInPeriod, today);
+    const prev = bookingsInPrev ? periodMetrics(bookingsInPrev, today) : null;
 
     const curLate = lateRate(matching, period.from, period.to, today);
     const prevLate =
@@ -423,7 +455,9 @@
 
   // ----------------------------- Tendencias ---------------------------------
 
-  function computeTrends(matching, period, today) {
+  // bookings: visao por aluguel (series de reservas); matching: por item
+  // (taxa de atraso por devolucao prevista).
+  function computeTrends(matching, bookings, period, today) {
     const gran = chooseGranularity(period.from, period.to);
     const buckets = buildBuckets(period.from, period.to, gran);
     const n = buckets.length;
@@ -432,7 +466,7 @@
     const unitsOut = new Array(n).fill(0);
     const agencySets = Array.from({ length: n }, () => new Set());
 
-    for (const r of matching) {
+    for (const r of bookings) {
       if (!inRange(r.checkout_date, period.from, period.to)) continue;
       const idx = bucketIndexFor(r.checkout_date, buckets);
       if (idx < 0) continue;
@@ -448,7 +482,7 @@
       const prevBuckets = buildBuckets(period.prevFrom, period.prevTo, gran);
       const pn = prevBuckets.length;
       prevRentals = new Array(Math.max(pn, n)).fill(0);
-      for (const r of matching) {
+      for (const r of bookings) {
         if (!inRange(r.checkout_date, period.prevFrom, period.prevTo)) continue;
         const idx = bucketIndexFor(r.checkout_date, prevBuckets);
         if (idx >= 0) prevRentals[idx] += 1;
@@ -708,16 +742,16 @@
 
   // ----------------------------- Anomalias ----------------------------------
 
-  function computeAnomalies(matching, period, today) {
+  function computeAnomalies(matching, bookings, period, today) {
     const out = [];
 
     // Serie semanal das ultimas ~26 semanas (independe do filtro de periodo,
-    // mas respeita agencia/material/situacao).
+    // mas respeita agencia/material/situacao). Conta por aluguel (reserva).
     const weeks = 26;
     const start = addDaysISO(today, -7 * weeks + 1);
     const buckets = buildBuckets(start, today, "week");
     const counts = new Array(buckets.length).fill(0);
-    for (const r of matching) {
+    for (const r of bookings) {
       if (!inRange(r.checkout_date, start, today)) continue;
       const idx = bucketIndexFor(r.checkout_date, buckets);
       if (idx >= 0) counts[idx] += 1;
