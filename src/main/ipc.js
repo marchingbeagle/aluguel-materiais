@@ -1,12 +1,15 @@
 "use strict";
 
-const { ipcMain, dialog, BrowserWindow } = require("electron");
+const { ipcMain, dialog, shell, BrowserWindow } = require("electron");
 const fs = require("fs");
+const path = require("path");
 
 const settings = require("./settings");
 const store = require("./csvStore");
 const lock = require("./lock");
 const availability = require("./availability");
+const attachments = require("./attachments");
+const rentalRules = require("./rentalRules");
 const dateUtils = require("../shared/dates");
 
 const { SCHEMAS } = store;
@@ -50,17 +53,29 @@ function nowStamp() {
 function ensureAllFiles() {
   const paths = settings.csvPaths();
   const legacy = settings.legacyCsvPaths();
-  // Migra arquivos do formato antigo (virgula + ingles) caso existam.
+  // Migra arquivos do formato antigo (virgula + ingles) caso existam. O
+  // alugueis.csv legado e migrado primeiro para o formato intermediario (um
+  // material por linha) e em seguida dividido em cabecalho + itens.
+  store.migrateLegacy(legacy.materials, paths.materials, SCHEMAS.materials);
+  store.migrateLegacy(legacy.agencies, paths.agencies, SCHEMAS.agencies);
+  store.migrateLegacy(legacy.rentals, paths.rentals, store.LEGACY_RENTALS_SCHEMA);
+
+  // Divide o alugueis.csv da versao anterior (coluna id_material) em
+  // alugueis.csv (dados gerais) + itens_aluguel.csv (materiais). Roda antes do
+  // reconcileSchema para que o cabecalho antigo nao seja descartado.
+  const split = store.migrateRentalsToItems(
+    paths.rentals,
+    paths.rentalItems,
+    SCHEMAS.rentals,
+    SCHEMAS.rentalItems
+  );
+
   for (const key of Object.keys(paths)) {
-    store.migrateLegacy(legacy[key], paths[key], SCHEMAS[key]);
+    store.ensureFile(paths[key], SCHEMAS[key]);
   }
-  store.ensureFile(paths.materials, SCHEMAS.materials);
-  store.ensureFile(paths.agencies, SCHEMAS.agencies);
-  store.ensureFile(paths.rentals, SCHEMAS.rentals);
-  // Atualiza o cabecalho de arquivos ja existentes para o schema atual
-  // (ex.: adiciona "codigo" nas agencias, remove "categoria" dos materiais).
+  // Atualiza o cabecalho de arquivos ja existentes para o schema atual.
   // So regrava quando o cabecalho realmente difere; nenhum dado e perdido.
-  let upgraded = false;
+  let upgraded = split;
   for (const key of Object.keys(paths)) {
     if (store.reconcileSchema(paths[key], SCHEMAS[key])) upgraded = true;
   }
@@ -73,24 +88,38 @@ function readEntity(name) {
   return store.readAll(paths[name], SCHEMAS[name]);
 }
 
-// Quantidade alugada (ativa) por material_id.
-function rentedByMaterial(rentals) {
+// Quantidade alugada (itens ativos) por material_id. Itens orfaos (sem
+// cabecalho de aluguel) sao ignorados.
+function rentedByMaterial(rentals, items) {
+  const headerIds = new Set(rentals.map((r) => r.id));
   const map = new Map();
-  for (const r of rentals) {
-    if (r.status === STATUS.RENTED) {
-      const q = Number(r.quantity) || 0;
-      map.set(r.material_id, (map.get(r.material_id) || 0) + q);
+  for (const it of items) {
+    if (it.status === STATUS.RENTED && headerIds.has(it.rental_id)) {
+      const q = Number(it.quantity) || 0;
+      map.set(it.material_id, (map.get(it.material_id) || 0) + q);
     }
   }
   return map;
 }
 
-function isOverdue(rental, today) {
+function isItemOverdue(item, rental, today) {
   return (
-    rental.status === STATUS.RENTED &&
+    item.status === STATUS.RENTED &&
     isValidDate(rental.expected_return_date) &&
     rental.expected_return_date < today
   );
+}
+
+// Situacao derivada do aluguel a partir dos itens:
+//   alugado   - todos os itens ativos
+//   parcial   - parte devolvida, parte ativa
+//   devolvido - todos os itens devolvidos
+function rentalStatusOf(items) {
+  if (!items.length) return STATUS.RETURNED;
+  const active = items.filter((it) => it.status === STATUS.RENTED).length;
+  if (active === 0) return STATUS.RETURNED;
+  if (active === items.length) return STATUS.RENTED;
+  return "parcial";
 }
 
 // Monta o pacote completo de dados ja enriquecido para a interface.
@@ -99,11 +128,25 @@ function buildSnapshot() {
   const materials = readEntity("materials");
   const agencies = readEntity("agencies");
   const rentals = readEntity("rentals");
+  const items = readEntity("rentalItems");
+  const attachRows = readEntity("attachments");
   const today = todayStr();
+  const dataDir = settings.getDataDir();
 
-  const rentedMap = rentedByMaterial(rentals);
+  const rentedMap = rentedByMaterial(rentals, items);
   const materialById = new Map(materials.map((m) => [m.id, m]));
   const agencyById = new Map(agencies.map((a) => [a.id, a]));
+
+  const itemsByRental = new Map();
+  for (const it of items) {
+    if (!itemsByRental.has(it.rental_id)) itemsByRental.set(it.rental_id, []);
+    itemsByRental.get(it.rental_id).push(it);
+  }
+  const attachmentsByRental = new Map();
+  for (const a of attachRows) {
+    if (!attachmentsByRental.has(a.rental_id)) attachmentsByRental.set(a.rental_id, []);
+    attachmentsByRental.get(a.rental_id).push(a);
+  }
 
   const materialsView = materials.map((m) => {
     const rented = rentedMap.get(m.id) || 0;
@@ -111,13 +154,52 @@ function buildSnapshot() {
     return { ...m, rented, available: total - rented };
   });
 
-  const rentalsView = rentals.map((r) => ({
-    ...r,
-    material_name: materialById.get(r.material_id)?.name || "(material removido)",
-    agency_name: agencyById.get(r.agency_id)?.name || "(agencia removida)",
-    agency_code: agencyById.get(r.agency_id)?.code || "",
-    overdue: isOverdue(r, today),
-  }));
+  const rentalsView = rentals.map((r) => {
+    const its = (itemsByRental.get(r.id) || []).map((it) => ({
+      ...it,
+      material_name: materialById.get(it.material_id)?.name || "(material removido)",
+      material_color: materialById.get(it.material_id)?.color || "",
+      overdue: isItemOverdue(it, r, today),
+    }));
+    const atts = (attachmentsByRental.get(r.id) || []).map((a) => ({
+      ...a,
+      missing: !attachments.storedFileExists(dataDir, a.rel_path),
+    }));
+    const status = rentalStatusOf(its);
+    return {
+      ...r,
+      agency_name: agencyById.get(r.agency_id)?.name || "(agencia removida)",
+      agency_code: agencyById.get(r.agency_id)?.code || "",
+      items: its,
+      attachments: atts,
+      status,
+      overdue: its.some((it) => it.overdue),
+      total_quantity: its.reduce((s, it) => s + (Number(it.quantity) || 0), 0),
+    };
+  });
+
+  // Entradas planas (uma por item) para calendario e painel analitico.
+  const rentalEntries = [];
+  for (const r of rentalsView) {
+    for (const it of r.items) {
+      rentalEntries.push({
+        id: it.id,
+        rental_id: r.id,
+        material_id: it.material_id,
+        material_name: it.material_name,
+        agency_id: r.agency_id,
+        agency_name: r.agency_name,
+        agency_code: r.agency_code,
+        event_name: r.event_name,
+        quantity: it.quantity,
+        checkout_date: r.checkout_date,
+        expected_return_date: r.expected_return_date,
+        actual_return_date: it.actual_return_date,
+        status: it.status,
+        overdue: it.overdue,
+      });
+    }
+  }
 
   let totalUnits = 0;
   for (const m of materials) totalUnits += Number(m.total_quantity) || 0;
@@ -125,8 +207,8 @@ function buildSnapshot() {
   let rentedUnits = 0;
   for (const q of rentedMap.values()) rentedUnits += q;
 
-  const activeRentals = rentals.filter((r) => r.status === STATUS.RENTED);
-  const overdueCount = activeRentals.filter((r) => isOverdue(r, today)).length;
+  const activeRentals = rentalsView.filter((r) => r.status !== STATUS.RETURNED);
+  const overdueCount = activeRentals.filter((r) => r.overdue).length;
 
   const stats = {
     totalMaterials: materials.length,
@@ -138,7 +220,14 @@ function buildSnapshot() {
     totalAgencies: agencies.length,
   };
 
-  return { materials: materialsView, agencies: agenciesSorted(agencies), rentals: rentalsView, stats, today };
+  return {
+    materials: materialsView,
+    agencies: agenciesSorted(agencies),
+    rentals: rentalsView,
+    rentalEntries,
+    stats,
+    today,
+  };
 }
 
 function agenciesSorted(agencies) {
@@ -159,6 +248,36 @@ async function mutate(entity, fn) {
     const next = fn(current);
     markSelfWrite();
     store.writeAll(paths[entity], SCHEMAS[entity], next);
+  });
+}
+
+// Mutacao dos dados de aluguel (cabecalho + itens + anexos) sob o MESMO lock,
+// com releitura fresca de tudo. fn recebe { rentals, items, attachments,
+// materials, agencies } e deve retornar { rentals, items, attachments } com as
+// novas listas, ou null para nao gravar nada (operacao recusada).
+//
+// A gravacao escreve itens e anexos ANTES do cabecalho: se o processo cair no
+// meio, linhas orfas (sem cabecalho) sao invisiveis para a aplicacao, em vez
+// de um aluguel sem itens.
+async function mutateRentalData(fn) {
+  const dir = settings.getDataDir();
+  const userId = settings.getUserId();
+  return lock.withLock(dir, userId, async () => {
+    ensureAllFiles();
+    const paths = settings.csvPaths();
+    const state = {
+      rentals: store.readAll(paths.rentals, SCHEMAS.rentals),
+      items: store.readAll(paths.rentalItems, SCHEMAS.rentalItems),
+      attachments: store.readAll(paths.attachments, SCHEMAS.attachments),
+      materials: store.readAll(paths.materials, SCHEMAS.materials),
+      agencies: store.readAll(paths.agencies, SCHEMAS.agencies),
+    };
+    const next = await fn(state);
+    if (!next) return;
+    markSelfWrite();
+    store.writeAll(paths.rentalItems, SCHEMAS.rentalItems, next.items);
+    store.writeAll(paths.attachments, SCHEMAS.attachments, next.attachments);
+    store.writeAll(paths.rentals, SCHEMAS.rentals, next.rentals);
   });
 }
 
@@ -213,6 +332,32 @@ function validateAgency(data) {
   return { errors, clean: { name, code } };
 }
 
+// ------------------------- Anexos: copia + rollback --------------------------
+
+// Copia os arquivos de origem para a pasta do aluguel e devolve as linhas de
+// metadados prontas para o CSV. Em caso de falha em QUALQUER arquivo, os ja
+// copiados sao removidos (tudo-ou-nada, dentro de attachments.copyAllIntoStore).
+function copyAttachmentFiles(rentalId, files, stamp) {
+  const dataDir = settings.getDataDir();
+  const results = attachments.copyAllIntoStore(dataDir, rentalId, files);
+  return results.map((result) => ({
+    id: store.newId(),
+    rental_id: rentalId,
+    file_name: result.fileName,
+    rel_path: result.relPath,
+    size: result.size,
+    adicionado_em: stamp,
+    alterado_em: "",
+  }));
+}
+
+function normalizeFilesPayload(list) {
+  if (!Array.isArray(list)) return [];
+  return list
+    .map((f) => ({ path: String(f?.path || ""), name: String(f?.name || "") }))
+    .filter((f) => f.path);
+}
+
 // ----------------------------- Handlers -------------------------------------
 
 function registerIpc() {
@@ -264,7 +409,8 @@ function registerIpc() {
 
   // Disponibilidade de cada material durante um periodo informado. Usado pelo
   // formulario de aluguel para mostrar a quantidade disponivel no intervalo.
-  // Le os dados mais recentes do disco a cada chamada.
+  // Le os dados mais recentes do disco a cada chamada. excludeId = id do
+  // ALUGUEL em edicao (todos os seus itens sao desconsiderados).
   ipcMain.handle("rentals:availability", (_e, payload) => {
     const checkout = payload?.checkout_date;
     const expectedReturn = payload?.expected_return_date;
@@ -280,16 +426,18 @@ function registerIpc() {
     ensureAllFiles();
     const materials = readEntity("materials");
     const rentals = readEntity("rentals");
+    const items = readEntity("rentalItems");
+    const occupancy = availability.occupancyFromItems(rentals, items, excludeId);
 
     const map = {};
     for (const m of materials) {
       map[m.id] = availability.availabilityForPeriod(
         m.total_quantity,
-        rentals,
+        occupancy,
         m.id,
         checkout,
         expectedReturn,
-        excludeId
+        null
       );
     }
     return done({ available: map });
@@ -337,7 +485,8 @@ function registerIpc() {
       }
       // Nao permitir total menor que o que ja esta alugado.
       const rentals = readEntity("rentals");
-      const rented = rentedByMaterial(rentals).get(data.id) || 0;
+      const items = readEntity("rentalItems");
+      const rented = rentedByMaterial(rentals, items).get(data.id) || 0;
       if (clean.total < rented) {
         belowRented = true;
         return rows;
@@ -364,7 +513,11 @@ function registerIpc() {
     let blocked = false;
     await mutate("materials", (rows) => {
       const rentals = readEntity("rentals");
-      const hasActive = rentals.some((r) => r.material_id === id && r.status === STATUS.RENTED);
+      const items = readEntity("rentalItems");
+      const headerIds = new Set(rentals.map((r) => r.id));
+      const hasActive = items.some(
+        (it) => it.material_id === id && it.status === STATUS.RENTED && headerIds.has(it.rental_id)
+      );
       if (hasActive) {
         blocked = true;
         return rows;
@@ -453,7 +606,11 @@ function registerIpc() {
     let blocked = false;
     await mutate("agencies", (rows) => {
       const rentals = readEntity("rentals");
-      const hasActive = rentals.some((r) => r.agency_id === id && r.status === STATUS.RENTED);
+      const items = readEntity("rentalItems");
+      const activeRentalIds = new Set(
+        items.filter((it) => it.status === STATUS.RENTED).map((it) => it.rental_id)
+      );
+      const hasActive = rentals.some((r) => r.agency_id === id && activeRentalIds.has(r.id));
       if (hasActive) {
         blocked = true;
         return rows;
@@ -466,199 +623,389 @@ function registerIpc() {
 
   // ------------------------------ Alugueis -----------------------------------
 
+  // Criacao: valida o payload (cabecalho + itens), depois, SOB O LOCK, rele os
+  // CSVs e revalida a disponibilidade de TODOS os itens. A operacao e atomica:
+  // se qualquer item for invalido/indisponivel, nada e gravado e os arquivos
+  // anexados ja copiados sao removidos.
   ipcMain.handle("rental:create", async (_e, data) => {
-    const quantity = parseIntStrict(data.quantity);
-    const errors = [];
-    if (!data.material_id) errors.push("Selecione um material.");
-    if (!data.agency_id) errors.push("Selecione uma agencia.");
-    if (quantity === null || quantity < 1) errors.push("Quantidade deve ser um inteiro >= 1.");
-    if (!isValidDate(data.checkout_date)) errors.push("Data de retirada invalida.");
-    if (!isValidDate(data.expected_return_date)) errors.push("Data prevista de devolucao invalida.");
-    if (
-      isValidDate(data.checkout_date) &&
-      isValidDate(data.expected_return_date) &&
-      data.expected_return_date < data.checkout_date
-    ) {
-      errors.push("Devolucao prevista nao pode ser anterior a retirada.");
-    }
+    const { errors, clean } = rentalRules.validateRentalPayload(data);
     if (errors.length) return fail("VALIDATION", errors.join(" "));
+    const files = normalizeFilesPayload(data?.attachments);
+
+    // Validacao previa dos anexos (extensao/tamanho) antes de tocar nos CSVs.
+    for (const f of files) {
+      const check = attachments.validateSource(f.path, f.name);
+      if (!check.ok) return fail("VALIDATION", check.message);
+    }
 
     let problem = null;
+    let createdRentalId = null;
 
-    await mutate("rentals", (rows) => {
-      const materials = readEntity("materials");
-      const agencies = readEntity("agencies");
-      const material = materials.find((m) => m.id === data.material_id);
-      const agency = agencies.find((a) => a.id === data.agency_id);
-      if (!material) {
-        problem = fail("NOT_FOUND", "Material nao encontrado.");
-        return rows;
-      }
-      if (!agency) {
-        problem = fail("NOT_FOUND", "Agencia nao encontrada.");
-        return rows;
-      }
-      // Recalcula a disponibilidade no PERIODO com dados frescos do disco
-      // (concorrencia: outra pessoa pode ter reservado nesse intervalo).
-      const available = availability.availabilityForPeriod(
-        material.total_quantity,
-        rows,
-        material.id,
-        data.checkout_date,
-        data.expected_return_date,
-        null
-      );
-      if (quantity > available) {
-        problem = fail(
-          "VALIDATION",
-          `Quantidade indisponivel no periodo selecionado. Disponivel: ${Math.max(0, available)}.`
+    try {
+      await mutateRentalData(async (state) => {
+        if (!state.agencies.some((a) => a.id === clean.agency_id)) {
+          problem = fail("NOT_FOUND", "Agencia nao encontrada.");
+          return null;
+        }
+        // Disponibilidade recalculada com dados frescos do disco, sob o lock.
+        const occupancy = availability.occupancyFromItems(state.rentals, state.items, null);
+        const issues = rentalRules.checkItemsAvailability(
+          clean.items,
+          state.materials,
+          occupancy,
+          clean.checkout_date,
+          clean.expected_return_date
         );
-        return rows;
-      }
-      rows.push({
-        id: store.newId(),
-        material_id: data.material_id,
-        agency_id: data.agency_id,
-        quantity,
-        checkout_date: data.checkout_date,
-        expected_return_date: data.expected_return_date,
-        actual_return_date: "",
-        status: STATUS.RENTED,
-        notes: String(data.notes || "").trim(),
-        adicionado_em: nowStamp(),
-        alterado_em: "",
+        if (issues.length) {
+          problem = fail("VALIDATION", rentalRules.availabilityMessage(issues));
+          return null;
+        }
+
+        const rentalId = store.newId();
+        createdRentalId = rentalId;
+        const stamp = nowStamp();
+
+        // Copia os anexos so depois de todas as validacoes. Se a copia falhar,
+        // os arquivos ja copiados sao removidos e nada e gravado.
+        let attachmentRows = [];
+        try {
+          attachmentRows = copyAttachmentFiles(rentalId, files, stamp);
+        } catch (err) {
+          attachments.removeRentalDir(settings.getDataDir(), rentalId);
+          if (err && err.code === "ATTACH_VALIDATION") {
+            problem = fail("VALIDATION", err.message);
+            return null;
+          }
+          throw err;
+        }
+
+        const newItems = clean.items.map((it) => ({
+          id: store.newId(),
+          rental_id: rentalId,
+          material_id: it.material_id,
+          quantity: it.quantity,
+          status: STATUS.RENTED,
+          actual_return_date: "",
+          adicionado_em: stamp,
+          alterado_em: "",
+        }));
+        return {
+          rentals: [
+            ...state.rentals,
+            {
+              id: rentalId,
+              agency_id: clean.agency_id,
+              event_name: clean.event_name,
+              checkout_date: clean.checkout_date,
+              expected_return_date: clean.expected_return_date,
+              notes: clean.notes,
+              adicionado_em: stamp,
+              alterado_em: "",
+            },
+          ],
+          items: [...state.items, ...newItems],
+          attachments: [...state.attachments, ...attachmentRows],
+        };
       });
-      return rows;
-    });
+    } catch (err) {
+      // Falha na gravacao dos CSVs (apos a copia dos anexos): remove os
+      // arquivos copiados para nao deixar anexos orfaos, e propaga o erro.
+      if (createdRentalId) attachments.removeRentalDir(settings.getDataDir(), createdRentalId);
+      throw err;
+    }
 
     return problem || done();
   });
 
+  // Edicao: dados gerais valem para o aluguel inteiro; itens sao reconciliados
+  // individualmente (atualizados, incluidos ou removidos). Itens ja devolvidos
+  // sao preservados como estao e nao podem ser alterados/removidos por aqui.
   ipcMain.handle("rental:update", async (_e, data) => {
-    const quantity = parseIntStrict(data.quantity);
-    const errors = [];
-    if (!data.material_id) errors.push("Selecione um material.");
-    if (!data.agency_id) errors.push("Selecione uma agencia.");
-    if (quantity === null || quantity < 1) errors.push("Quantidade deve ser um inteiro >= 1.");
-    if (!isValidDate(data.checkout_date)) errors.push("Data de retirada invalida.");
-    if (!isValidDate(data.expected_return_date)) errors.push("Data prevista de devolucao invalida.");
-    if (
-      isValidDate(data.checkout_date) &&
-      isValidDate(data.expected_return_date) &&
-      data.expected_return_date < data.checkout_date
-    ) {
-      errors.push("Devolucao prevista nao pode ser anterior a retirada.");
-    }
-    // Quando devolvido, a data de devolucao (se informada) deve ser valida.
-    const isReturned = data._baseline ? data._baseline.status === STATUS.RETURNED : false;
-    let actualReturnDate = "";
-    if (isReturned) {
-      if (data.actual_return_date) {
-        if (!isValidDate(data.actual_return_date)) {
-          errors.push("Data de devolucao invalida.");
-        } else if (data.actual_return_date < data.checkout_date) {
-          errors.push("Devolucao nao pode ser anterior a retirada.");
-        } else {
-          actualReturnDate = data.actual_return_date;
-        }
-      }
-    }
+    const { errors, clean } = rentalRules.validateRentalPayload(data);
     if (errors.length) return fail("VALIDATION", errors.join(" "));
 
     let problem = null;
 
-    await mutate("rentals", (rows) => {
-      const idx = rows.findIndex((r) => r.id === data.id);
+    await mutateRentalData(async (state) => {
+      const idx = state.rentals.findIndex((r) => r.id === data.id);
       if (idx === -1) {
         problem = fail("NOT_FOUND", "Aluguel nao encontrado (pode ter sido removido).");
-        return rows;
+        return null;
       }
-      if (changedSinceBaseline(rows[idx], data._baseline, store.keysOf(SCHEMAS.rentals))) {
+      const current = state.rentals[idx];
+      if (changedSinceBaseline(current, data._baseline, store.keysOf(SCHEMAS.rentals))) {
         problem = fail("CONFLICT", "Este aluguel foi alterado por outro usuario. Recarregue e tente novamente.");
-        return rows;
+        return null;
       }
-
-      const materials = readEntity("materials");
-      const agencies = readEntity("agencies");
-      const material = materials.find((m) => m.id === data.material_id);
-      const agency = agencies.find((a) => a.id === data.agency_id);
-      if (!material) {
-        problem = fail("NOT_FOUND", "Material nao encontrado.");
-        return rows;
-      }
-      if (!agency) {
+      if (!state.agencies.some((a) => a.id === clean.agency_id)) {
         problem = fail("NOT_FOUND", "Agencia nao encontrada.");
-        return rows;
+        return null;
       }
 
-      // Se o aluguel continua ativo, valida a disponibilidade no PERIODO
-      // desconsiderando o proprio registro (para nao contar sua quantidade
-      // duas vezes). Usa dados frescos do disco (concorrencia otimista).
-      const current = rows[idx];
-      if (current.status === STATUS.RENTED) {
-        const available = availability.availabilityForPeriod(
-          material.total_quantity,
-          rows,
-          material.id,
-          data.checkout_date,
-          data.expected_return_date,
-          current.id
-        );
-        if (quantity > available) {
-          problem = fail(
-            "VALIDATION",
-            `Quantidade indisponivel no periodo selecionado. Disponivel: ${Math.max(0, available)}.`
-          );
-          return rows;
+      const existingItems = state.items.filter((it) => it.rental_id === data.id);
+      const existingById = new Map(existingItems.map((it) => [it.id, it]));
+      const stamp = nowStamp();
+
+      // Reconciliacao dos itens enviados com os existentes.
+      const nextItems = [];
+      const keptIds = new Set();
+      for (const it of clean.items) {
+        const existing = it.id ? existingById.get(it.id) : null;
+        if (existing) {
+          keptIds.add(existing.id);
+          if (existing.status === STATUS.RETURNED) {
+            // Item devolvido: preservado como esta (historico imutavel aqui).
+            nextItems.push(existing);
+          } else {
+            const changed =
+              existing.material_id !== it.material_id ||
+              Number(existing.quantity) !== it.quantity;
+            nextItems.push({
+              ...existing,
+              material_id: it.material_id,
+              quantity: it.quantity,
+              alterado_em: changed ? stamp : existing.alterado_em,
+            });
+          }
+        } else {
+          nextItems.push({
+            id: store.newId(),
+            rental_id: data.id,
+            material_id: it.material_id,
+            quantity: it.quantity,
+            status: STATUS.RENTED,
+            actual_return_date: "",
+            adicionado_em: stamp,
+            alterado_em: "",
+          });
         }
       }
+      // Itens devolvidos ausentes do payload tambem sao preservados.
+      for (const ex of existingItems) {
+        if (ex.status === STATUS.RETURNED && !keptIds.has(ex.id)) nextItems.push(ex);
+      }
+      if (!nextItems.length) {
+        problem = fail("VALIDATION", "O aluguel precisa ter pelo menos um material.");
+        return null;
+      }
 
-      rows[idx] = {
+      // Disponibilidade dos itens que ficarao ATIVOS, com dados frescos e
+      // desconsiderando os proprios itens deste aluguel.
+      const activeToValidate = nextItems
+        .filter((it) => it.status === STATUS.RENTED)
+        .map((it) => ({ material_id: it.material_id, quantity: Number(it.quantity) }));
+      const occupancy = availability.occupancyFromItems(state.rentals, state.items, data.id);
+      const issues = rentalRules.checkItemsAvailability(
+        activeToValidate,
+        state.materials,
+        occupancy,
+        clean.checkout_date,
+        clean.expected_return_date
+      );
+      if (issues.length) {
+        problem = fail("VALIDATION", rentalRules.availabilityMessage(issues));
+        return null;
+      }
+
+      const nextRentals = [...state.rentals];
+      nextRentals[idx] = {
         ...current,
-        material_id: data.material_id,
-        agency_id: data.agency_id,
-        quantity,
-        checkout_date: data.checkout_date,
-        expected_return_date: data.expected_return_date,
-        actual_return_date: current.status === STATUS.RETURNED ? actualReturnDate : "",
-        notes: String(data.notes || "").trim(),
-        alterado_em: nowStamp(),
+        agency_id: clean.agency_id,
+        event_name: clean.event_name,
+        checkout_date: clean.checkout_date,
+        expected_return_date: clean.expected_return_date,
+        notes: clean.notes,
+        alterado_em: stamp,
       };
-      return rows;
+
+      return {
+        rentals: nextRentals,
+        items: [
+          ...state.items.filter((it) => it.rental_id !== data.id),
+          ...nextItems,
+        ],
+        attachments: state.attachments,
+      };
     });
 
     return problem || done();
   });
 
+  // Devolucao por item (parcial) ou total. payload:
+  //   { id, item_ids?: string[], actual_return_date?: "YYYY-MM-DD" }
+  // Sem item_ids, devolve todos os itens ativos (devolucao total).
   ipcMain.handle("rental:return", async (_e, payload) => {
     const id = typeof payload === "string" ? payload : payload?.id;
-    const providedDate = typeof payload === "object" ? payload.actual_return_date : "";
+    const itemIds = Array.isArray(payload?.item_ids) ? payload.item_ids.map(String) : null;
+    const providedDate = typeof payload === "object" ? payload?.actual_return_date : "";
     const returnDate = isValidDate(providedDate) ? providedDate : todayStr();
 
-    let notFound = false;
-    let already = false;
+    let problem = null;
 
-    await mutate("rentals", (rows) => {
-      const idx = rows.findIndex((r) => r.id === id);
-      if (idx === -1) {
-        notFound = true;
-        return rows;
+    await mutateRentalData(async (state) => {
+      const rentalIdx = state.rentals.findIndex((r) => r.id === id);
+      if (rentalIdx === -1) {
+        problem = fail("NOT_FOUND", "Aluguel nao encontrado.");
+        return null;
       }
-      if (rows[idx].status !== STATUS.RENTED) {
-        already = true;
-        return rows;
+      const ownItems = state.items.filter((it) => it.rental_id === id);
+      const activeItems = ownItems.filter((it) => it.status === STATUS.RENTED);
+      if (!activeItems.length) {
+        problem = fail("VALIDATION", "Este aluguel ja foi totalmente devolvido.");
+        return null;
       }
-      rows[idx] = { ...rows[idx], status: STATUS.RETURNED, actual_return_date: returnDate, alterado_em: nowStamp() };
-      return rows;
+
+      const targets = itemIds
+        ? activeItems.filter((it) => itemIds.includes(it.id))
+        : activeItems;
+      if (!targets.length) {
+        problem = fail("VALIDATION", "Nenhum item pendente selecionado para devolucao.");
+        return null;
+      }
+
+      const stamp = nowStamp();
+      const targetIds = new Set(targets.map((it) => it.id));
+      const nextItems = state.items.map((it) =>
+        targetIds.has(it.id)
+          ? { ...it, status: STATUS.RETURNED, actual_return_date: returnDate, alterado_em: stamp }
+          : it
+      );
+      const nextRentals = [...state.rentals];
+      nextRentals[rentalIdx] = { ...nextRentals[rentalIdx], alterado_em: stamp };
+
+      return { rentals: nextRentals, items: nextItems, attachments: state.attachments };
     });
 
-    if (notFound) return fail("NOT_FOUND", "Aluguel nao encontrado.");
-    if (already) return fail("VALIDATION", "Este aluguel ja foi devolvido.");
+    return problem || done();
+  });
+
+  // Exclusao: remove cabecalho, itens, metadados de anexos e os arquivos
+  // fisicos da pasta do aluguel.
+  ipcMain.handle("rental:delete", async (_e, id) => {
+    await mutateRentalData(async (state) => ({
+      rentals: state.rentals.filter((r) => r.id !== id),
+      items: state.items.filter((it) => it.rental_id !== id),
+      attachments: state.attachments.filter((a) => a.rental_id !== id),
+    }));
+    attachments.removeRentalDir(settings.getDataDir(), id);
     return done();
   });
 
-  ipcMain.handle("rental:delete", async (_e, id) => {
-    await mutate("rentals", (rows) => rows.filter((r) => r.id !== id));
+  // ------------------------------ Anexos -------------------------------------
+
+  // Abre o dialogo de selecao de arquivos e retorna os escolhidos (caminho,
+  // nome e tamanho). Nada e copiado ainda.
+  ipcMain.handle("attachment:pick", async () => {
+    const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+    const res = await dialog.showOpenDialog(win, {
+      title: "Selecionar anexos",
+      properties: ["openFile", "multiSelections"],
+      filters: [
+        { name: "Arquivos permitidos", extensions: attachments.ALLOWED_EXTENSIONS },
+        { name: "Todos os arquivos", extensions: ["*"] },
+      ],
+    });
+    if (res.canceled || !res.filePaths.length) return { ok: false, canceled: true };
+    const files = res.filePaths.map((p) => {
+      let size = 0;
+      try {
+        size = fs.statSync(p).size;
+      } catch (_err) {}
+      const name = path.basename(p);
+      const check = attachments.validateSource(p, name);
+      return { path: p, name, size, valid: check.ok, message: check.ok ? "" : check.message };
+    });
+    return done({ files });
+  });
+
+  // Adiciona anexos a um aluguel ja existente.
+  ipcMain.handle("attachment:add", async (_e, payload) => {
+    const rentalId = String(payload?.rental_id || "");
+    const files = normalizeFilesPayload(payload?.files);
+    if (!rentalId || !files.length) return fail("VALIDATION", "Nenhum arquivo selecionado.");
+
+    for (const f of files) {
+      const check = attachments.validateSource(f.path, f.name);
+      if (!check.ok) return fail("VALIDATION", check.message);
+    }
+
+    let problem = null;
+    let addedRows = [];
+
+    try {
+      await mutateRentalData(async (state) => {
+        if (!state.rentals.some((r) => r.id === rentalId)) {
+          problem = fail("NOT_FOUND", "Aluguel nao encontrado.");
+          return null;
+        }
+        const stamp = nowStamp();
+        try {
+          addedRows = copyAttachmentFiles(rentalId, files, stamp);
+        } catch (err) {
+          if (err && err.code === "ATTACH_VALIDATION") {
+            problem = fail("VALIDATION", err.message);
+            return null;
+          }
+          throw err;
+        }
+        return {
+          rentals: state.rentals,
+          items: state.items,
+          attachments: [...state.attachments, ...addedRows],
+        };
+      });
+    } catch (err) {
+      // Gravacao falhou apos a copia: remove os arquivos recem-copiados.
+      const dataDir = settings.getDataDir();
+      for (const row of addedRows) attachments.removeStoredFile(dataDir, row.rel_path);
+      throw err;
+    }
+
+    if (problem) return problem;
+    return done({ attachments: addedRows });
+  });
+
+  // Remove um anexo: apaga o registro e o arquivo fisico (a confirmacao e
+  // feita na interface antes de chamar este handler).
+  ipcMain.handle("attachment:remove", async (_e, attachmentId) => {
+    let removedRelPath = null;
+    let notFound = false;
+
+    await mutateRentalData(async (state) => {
+      const row = state.attachments.find((a) => a.id === attachmentId);
+      if (!row) {
+        notFound = true;
+        return null;
+      }
+      removedRelPath = row.rel_path;
+      return {
+        rentals: state.rentals,
+        items: state.items,
+        attachments: state.attachments.filter((a) => a.id !== attachmentId),
+      };
+    });
+
+    if (notFound) return fail("NOT_FOUND", "Anexo nao encontrado.");
+    if (removedRelPath) attachments.removeStoredFile(settings.getDataDir(), removedRelPath);
+    return done();
+  });
+
+  // Abre o arquivo anexado com o aplicativo padrao do sistema.
+  ipcMain.handle("attachment:open", async (_e, attachmentId) => {
+    ensureAllFiles();
+    const rows = readEntity("attachments");
+    const row = rows.find((a) => a.id === attachmentId);
+    if (!row) return fail("NOT_FOUND", "Anexo nao encontrado.");
+    const dataDir = settings.getDataDir();
+    const abs = attachments.absolutePathOf(dataDir, row.rel_path);
+    if (!abs || !fs.existsSync(abs)) {
+      return fail(
+        "MISSING",
+        `O arquivo "${row.file_name}" nao foi encontrado na pasta de dados. Ele pode ter sido movido ou removido externamente.`
+      );
+    }
+    const errMsg = await shell.openPath(abs);
+    if (errMsg) return fail("OPEN_FAILED", `Nao foi possivel abrir o arquivo: ${errMsg}`);
     return done();
   });
 }

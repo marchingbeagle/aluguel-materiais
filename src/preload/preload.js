@@ -26,11 +26,17 @@ contextBridge.exposeInMainWorld("api", {
   updateAgency: (data) => ipcRenderer.invoke("agency:update", data),
   deleteAgency: (id) => ipcRenderer.invoke("agency:delete", id),
 
-  // Alugueis
+  // Alugueis (multiplos materiais por aluguel)
   createRental: (data) => ipcRenderer.invoke("rental:create", data),
   updateRental: (data) => ipcRenderer.invoke("rental:update", data),
   returnRental: (payload) => ipcRenderer.invoke("rental:return", payload),
   deleteRental: (id) => ipcRenderer.invoke("rental:delete", id),
+
+  // Anexos
+  pickAttachments: () => ipcRenderer.invoke("attachment:pick"),
+  addAttachments: (payload) => ipcRenderer.invoke("attachment:add", payload),
+  removeAttachment: (id) => ipcRenderer.invoke("attachment:remove", id),
+  openAttachment: (id) => ipcRenderer.invoke("attachment:open", id),
 
   // Avisos de mudanca externa (auto-refresh). Retorna funcao para cancelar.
   onDataChanged: (cb) => {
