@@ -17,16 +17,22 @@ Os dados ficam em arquivos **CSV** que podem ser abertos e editados no Excel. Na
   - Os graficos usam a biblioteca **Chart.js** embarcada localmente (`src/renderer/vendor/`), sem necessidade de internet.
 - **Materiais**: cadastro, edicao, exclusao e busca por nome/descricao. Calcula automaticamente a quantidade disponivel.
 - **Agencias**: cadastro, edicao, exclusao e busca. Cada agencia tem um **codigo** numerico unico (ex.: `01`, `02`, `03`), exibido nas listas, formularios e no calendario.
-- **Alugueis**: registrar retirada (material, agencia, quantidade, datas), impedir alugar mais do que o disponivel e marcar devolucao. Filtros por agencia, codigo da agencia, material, situacao, faixas de data (retirada e devolucao prevista) e somente atrasados, com botao para limpar os filtros.
-- **Calendario**: visao mensal e semanal dos alugueis. Cada entrada mostra o **codigo da agencia** em destaque, seguido do material e da quantidade, para identificar rapidamente a agencia.
+- **Alugueis com varios materiais**: uma unica solicitacao pode incluir varios materiais com quantidades diferentes (ex.: 1 balao + 1 portal + 3 windbanners), alem de **nome do evento**, observacoes e **anexos**. O formulario tem a secao "Materiais do aluguel" com o botao "Adicionar outro material", mostra a disponibilidade de cada material no periodo selecionado, impede materiais repetidos e exibe um resumo dos itens antes da confirmacao. A disponibilidade de **todos** os itens e validada de forma atomica: se um item nao couber no periodo, nada e gravado.
+- **Devolucao por item**: a devolucao pode ser total ou parcial (desmarcando os itens que continuam com a agencia); a situacao e a data de devolucao ficam registradas em cada item. Filtros por agencia, codigo da agencia, material, situacao, faixas de data (retirada e devolucao prevista) e somente atrasados, com botao para limpar os filtros.
+- **Anexos**: arquivos (pdf, imagens, Office, txt, csv, zip; ate 25 MB cada) sao copiados para `anexos/alugueis/<id_do_aluguel>/` dentro da pasta de dados, com nomes seguros e sem sobrescrever arquivos de mesmo nome. Da para abrir, adicionar e remover anexos (a remocao pede confirmacao antes de excluir o arquivo fisico); anexos movidos/removidos por fora sao sinalizados como "arquivo ausente".
+- **Calendario**: visao mensal e semanal dos alugueis (uma entrada por material). Cada entrada mostra o **codigo da agencia** em destaque, seguido do material e da quantidade, para identificar rapidamente a agencia.
 - **Configuracoes**: escolher a pasta dos CSV, ver os caminhos atuais, validar e criar os arquivos que faltarem.
 - **Concorrencia**: lock de escrita, releitura antes de gravar e auto-refresh quando os arquivos mudam.
 
 ## Como o calculo de disponibilidade funciona
 
+A disponibilidade e calculada **por periodo**: para cada material, o app soma as quantidades dos itens ativos de alugueis cujo intervalo (retirada ate devolucao prevista) se sobrepoe ao periodo consultado e usa o **pico de ocupacao simultanea**:
+
 ```
-disponivel = quantidade_total - soma das quantidades de alugueis com status "alugado"
+disponivel no periodo = quantidade_total - maior ocupacao simultanea dos itens ativos no intervalo
 ```
+
+Na edicao de um aluguel, os itens do proprio aluguel sao desconsiderados do calculo (para nao contar duas vezes). Antes de gravar, tudo e revalidado com os dados frescos do disco, sob o lock de escrita.
 
 ## Instalacao e execucao
 
@@ -145,20 +151,34 @@ Formato das datas/hora: `YYYY-MM-DD HH:mm:ss` (horario local).
 
 - `codigo`: identificador numerico curto e unico da agencia (ex.: `01`, `02`, `103`). Os zeros a esquerda sao preservados (o valor e tratado como texto, nunca convertido para numero). Observacao: ao editar o CSV no Excel, ele pode remover zeros a esquerda; formate a coluna como **Texto** se for editar por la.
 
-### `alugueis.csv`
-`id; id_material; id_agencia; quantidade; data_retirada; data_prevista_devolucao; data_devolucao; situacao; observacoes; adicionado_em; alterado_em`
+### `alugueis.csv` (dados gerais do aluguel)
+`id; id_agencia; nome_evento; data_retirada; data_prevista_devolucao; observacoes; adicionado_em; alterado_em`
 
-- `situacao`: `alugado` ou `devolvido`
+- um aluguel e a solicitacao completa de uma agencia para um evento; os materiais ficam em `itens_aluguel.csv`
 - datas (`data_*`) no formato `YYYY-MM-DD`
-- `id`, `id_material`, `id_agencia` gerados automaticamente (nao edite manualmente)
+
+### `itens_aluguel.csv` (materiais do aluguel)
+`id; id_aluguel; id_material; quantidade; situacao; data_devolucao; adicionado_em; alterado_em`
+
+- cada linha e um material do aluguel, com situacao e devolucao **individuais** (permite devolucao parcial)
+- `situacao`: `alugado` ou `devolvido`
+- `id_aluguel` referencia o `id` em `alugueis.csv`
+
+### `anexos_aluguel.csv` (metadados dos anexos)
+`id; id_aluguel; nome_original; caminho_relativo; tamanho_bytes; adicionado_em; alterado_em`
+
+- `caminho_relativo` e sempre relativo a pasta de dados (ex.: `anexos/alugueis/<id_do_aluguel>/arquivo.pdf`); caminhos absolutos nunca sao gravados
+- o conteudo dos arquivos NUNCA fica dentro dos CSV; os arquivos sao copiados para a subpasta `anexos/alugueis/<id_do_aluguel>/`
+- `nome_original` preserva o nome escolhido pelo usuario para exibicao; no disco o nome e sanitizado e recebe sufixo numerado em caso de duplicidade
 
 ## Migracao de dados antigos
 
-Versoes anteriores usavam arquivos com nomes em ingles, separados por virgula e sem colunas de data (`materials.csv`, `agencies.csv`, `rentals.csv`).
+Ha duas migracoes automaticas, executadas na abertura do app (e idempotentes):
 
-Na primeira vez que o app abrir apos a atualizacao, se esses arquivos antigos existirem na pasta de dados, eles sao convertidos automaticamente para o novo formato (`materiais.csv`, `agencias.csv`, `alugueis.csv`): virgula vira ponto-e-virgula, os cabecalhos passam para portugues e as colunas `adicionado_em`/`alterado_em` sao adicionadas (em branco para os registros antigos, pois a data original e desconhecida).
+1. **Formato em ingles** (`materials.csv`, `agencies.csv`, `rentals.csv`, separados por virgula): convertidos para os arquivos em portugues com ponto-e-virgula, como nas versoes anteriores. Os arquivos antigos nao sao apagados.
+2. **Aluguel com um unico material** (o `alugueis.csv` anterior, com a coluna `id_material`): cada aluguel antigo vira um **aluguel principal** em `alugueis.csv` (mesmo `id`, agencia, datas e observacoes preservados; `nome_evento` em branco) e seu material vira o **primeiro item** em `itens_aluguel.csv` (id deterministico `<id>-i1`, com quantidade, situacao e data de devolucao preservadas). Antes de regravar, o arquivo original e copiado como `alugueis-backup-AAAAMMDD.csv` na propria pasta de dados. Nenhum dado e perdido; re-rodar a migracao apos uma falha parcial nao duplica itens.
 
-Os arquivos antigos **nao sao apagados** - ficam como backup e podem ser removidos manualmente depois que voce confirmar que a migracao deu certo. Em pasta compartilhada na nuvem, deixe um computador atualizar primeiro: ele cria os arquivos novos e os demais apenas recebem pela sincronizacao.
+Em pasta compartilhada na nuvem, deixe um computador atualizar primeiro: ele cria os arquivos novos e os demais apenas recebem pela sincronizacao.
 
 ### Atualizacao de colunas (codigo de agencia e remocao de categoria)
 
@@ -177,10 +197,13 @@ aluguel-materiais/
   src/
     main/
       main.js        # ciclo de vida do app, janela, observador da pasta
-      settings.js    # settings.json, caminhos dos CSV, userId
-      csvStore.js    # leitura/escrita CSV atomica, criacao de arquivos
+      settings.js    # settings.json, caminhos dos CSV, userId, pasta de anexos
+      csvStore.js    # leitura/escrita CSV atomica, criacao de arquivos, migracoes
       lock.js        # trava de escrita (lock) com heartbeat
-      ipc.js         # handlers IPC + regras de negocio
+      ipc.js         # handlers IPC + orquestracao das regras de negocio
+      availability.js# disponibilidade por periodo (puro) + ocupacao por itens
+      rentalRules.js # validacao do aluguel multi-itens (puro)
+      attachments.js # copia, nomes seguros, limites e remocao de anexos
     preload/
       preload.js     # contextBridge -> window.api
     renderer/
@@ -195,7 +218,7 @@ aluguel-materiais/
 ## Premissas
 
 - Interface em portugues (pt-BR), renderer em HTML/CSS/JS puro (sem etapa de build).
-- Tres arquivos CSV separados (mais limpo que um arquivo unico).
+- Cinco arquivos CSV separados (materiais, agencias, alugueis, itens de aluguel e metadados de anexos).
 - 2-3 usuarios simultaneos de baixa frequencia, via pasta sincronizada na nuvem.
 - Datas tratadas como texto `YYYY-MM-DD` (sem fuso horario).
 - Quantidades sao inteiros nao negativos.
