@@ -13,6 +13,9 @@ contextBridge.exposeInMainWorld("api", {
   // Dados
   loadAll: () => ipcRenderer.invoke("data:loadAll"),
 
+  // Disponibilidade de materiais em um periodo (para o formulario de aluguel).
+  getAvailability: (params) => ipcRenderer.invoke("rentals:availability", params),
+
   // Materiais
   createMaterial: (data) => ipcRenderer.invoke("material:create", data),
   updateMaterial: (data) => ipcRenderer.invoke("material:update", data),

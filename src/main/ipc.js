@@ -6,6 +6,8 @@ const fs = require("fs");
 const settings = require("./settings");
 const store = require("./csvStore");
 const lock = require("./lock");
+const availability = require("./availability");
+const dateUtils = require("../shared/dates");
 
 const { SCHEMAS } = store;
 
@@ -30,11 +32,10 @@ function todayStr() {
   return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
+// Validacao centralizada de datas internas (YYYY-MM-DD), rejeitando datas
+// inexistentes como 2026-02-31.
 function isValidDate(str) {
-  if (!str) return false;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(str)) return false;
-  const d = new Date(str + "T00:00:00");
-  return !Number.isNaN(d.getTime());
+  return dateUtils.isValidISO(str);
 }
 
 // Carimbo de data/hora local "YYYY-MM-DD HH:mm:ss" para adicionado_em/alterado_em.
@@ -261,6 +262,39 @@ function registerIpc() {
 
   ipcMain.handle("data:loadAll", () => buildSnapshot());
 
+  // Disponibilidade de cada material durante um periodo informado. Usado pelo
+  // formulario de aluguel para mostrar a quantidade disponivel no intervalo.
+  // Le os dados mais recentes do disco a cada chamada.
+  ipcMain.handle("rentals:availability", (_e, payload) => {
+    const checkout = payload?.checkout_date;
+    const expectedReturn = payload?.expected_return_date;
+    const excludeId = payload?.excludeId || null;
+
+    if (!isValidDate(checkout) || !isValidDate(expectedReturn)) {
+      return fail("VALIDATION", "Periodo invalido.");
+    }
+    if (expectedReturn < checkout) {
+      return fail("VALIDATION", "Devolucao prevista nao pode ser anterior a retirada.");
+    }
+
+    ensureAllFiles();
+    const materials = readEntity("materials");
+    const rentals = readEntity("rentals");
+
+    const map = {};
+    for (const m of materials) {
+      map[m.id] = availability.availabilityForPeriod(
+        m.total_quantity,
+        rentals,
+        m.id,
+        checkout,
+        expectedReturn,
+        excludeId
+      );
+    }
+    return done({ available: map });
+  });
+
   // ----------------------------- Materiais ----------------------------------
 
   ipcMain.handle("material:create", async (_e, data) => {
@@ -464,13 +498,20 @@ function registerIpc() {
         problem = fail("NOT_FOUND", "Agencia nao encontrada.");
         return rows;
       }
-      // Recalcula disponibilidade com dados frescos do disco.
-      const rented = rentedByMaterial(rows).get(material.id) || 0;
-      const available = (Number(material.total_quantity) || 0) - rented;
+      // Recalcula a disponibilidade no PERIODO com dados frescos do disco
+      // (concorrencia: outra pessoa pode ter reservado nesse intervalo).
+      const available = availability.availabilityForPeriod(
+        material.total_quantity,
+        rows,
+        material.id,
+        data.checkout_date,
+        data.expected_return_date,
+        null
+      );
       if (quantity > available) {
         problem = fail(
           "VALIDATION",
-          `Quantidade indisponivel. Disponivel agora: ${Math.max(0, available)}.`
+          `Quantidade indisponivel no periodo selecionado. Disponivel: ${Math.max(0, available)}.`
         );
         return rows;
       }
@@ -550,22 +591,23 @@ function registerIpc() {
         return rows;
       }
 
-      // Se o aluguel continua ativo, valida disponibilidade excluindo a propria
-      // contribuicao atual deste registro para o material escolhido.
+      // Se o aluguel continua ativo, valida a disponibilidade no PERIODO
+      // desconsiderando o proprio registro (para nao contar sua quantidade
+      // duas vezes). Usa dados frescos do disco (concorrencia otimista).
       const current = rows[idx];
       if (current.status === STATUS.RENTED) {
-        const othersRented = rows.reduce((sum, r) => {
-          if (r.id === current.id) return sum;
-          if (r.status === STATUS.RENTED && r.material_id === material.id) {
-            return sum + (Number(r.quantity) || 0);
-          }
-          return sum;
-        }, 0);
-        const available = (Number(material.total_quantity) || 0) - othersRented;
+        const available = availability.availabilityForPeriod(
+          material.total_quantity,
+          rows,
+          material.id,
+          data.checkout_date,
+          data.expected_return_date,
+          current.id
+        );
         if (quantity > available) {
           problem = fail(
             "VALIDATION",
-            `Quantidade indisponivel. Disponivel agora: ${Math.max(0, available)}.`
+            `Quantidade indisponivel no periodo selecionado. Disponivel: ${Math.max(0, available)}.`
           );
           return rows;
         }
