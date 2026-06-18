@@ -1,7 +1,16 @@
 "use strict";
 
 // Estado em memoria com o ultimo snapshot carregado do processo principal.
-let data = { materials: [], agencies: [], rentals: [], stats: {}, today: "" };
+let data = {
+  materials: [],
+  agencies: [],
+  rentals: [],
+  stockProducts: [],
+  stockMovements: [],
+  stockStats: {},
+  stats: {},
+  today: "",
+};
 let currentView = "dashboard";
 
 // Estado do calendario.
@@ -310,6 +319,7 @@ async function loadAll() {
 function renderAll() {
   renderDashboard();
   renderMaterials();
+  renderStock();
   renderAgencies();
   renderRentals();
   renderCalendar();
@@ -331,6 +341,7 @@ const dashFilters = {
 const dashCharts = {};
 
 const fmtInt = (n) => Number(n || 0).toLocaleString("pt-BR");
+const fmtMoney = (n) => Number(n || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
 function chartReady() {
   return typeof Chart !== "undefined";
@@ -901,6 +912,285 @@ function openMaterialForm(material) {
     noColor.addEventListener("change", sync);
     sync();
   }
+}
+
+// ----------------------------- Estoque -----------------------------
+
+function stockStatusBadge(p) {
+  const cls =
+    p.status === "empty" || p.status === "low"
+      ? "badge-overdue"
+      : p.status === "excess"
+        ? "badge-partial"
+        : "badge-ok";
+  return `<span class="badge ${cls}">${escapeHtml(p.status_label || "-")}</span>`;
+}
+
+function movementTypeBadge(type) {
+  return type === "saida"
+    ? '<span class="badge badge-overdue">Saida</span>'
+    : '<span class="badge badge-ok">Entrada</span>';
+}
+
+function renderStock() {
+  renderStockKpis();
+  renderStockCharts();
+  renderStockProducts();
+  renderStockMovements();
+}
+
+function renderStockKpis() {
+  const s = data.stockStats || {};
+  const grid = $("#stockKpiGrid");
+  if (!grid) return;
+  grid.innerHTML = [
+    kpiCard({ label: "Produtos", value: fmtInt(s.totalProducts), sub: "cadastrados" }),
+    kpiCard({ label: "Unidades em estoque", value: fmtInt(s.totalStock), sub: "saldo atual" }),
+    kpiCard({ label: "Valor estimado", value: fmtMoney(s.totalValue), sub: "preco medio de compra" }),
+    kpiCard({ label: "Abaixo do minimo", value: fmtInt(s.lowProducts), sub: "inclui sem estoque" }),
+    kpiCard({ label: "Mov. no mes", value: fmtInt(s.movementsThisMonth), sub: "entradas e saidas" }),
+  ].join("");
+}
+
+function renderStockCharts() {
+  if (!chartReady()) return;
+  const products = data.stockProducts || [];
+  const statusLabels = {
+    ok: "Dentro da faixa",
+    low: "Abaixo do minimo",
+    empty: "Sem estoque",
+    excess: "Excedente",
+  };
+  const statusColors = {
+    ok: "#41a812",
+    low: "#ef4444",
+    empty: "#991b1b",
+    excess: "#f59e0b",
+  };
+  const statusEntries = Object.entries(data.stockStats?.byStatus || {}).filter(([, v]) => v > 0);
+  if (statusEntries.length) {
+    upsertChart("stockStatus", "chartStockStatus", {
+      type: "doughnut",
+      data: {
+        labels: statusEntries.map(([k]) => statusLabels[k] || k),
+        datasets: [{ data: statusEntries.map(([, v]) => v), backgroundColor: statusEntries.map(([k]) => statusColors[k] || "#94a3b8") }],
+      },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: "bottom" } } },
+    });
+  } else {
+    destroyChart("stockStatus");
+  }
+
+  const byCategory = new Map();
+  for (const p of products) {
+    const cat = p.category || "Sem categoria";
+    byCategory.set(cat, (byCategory.get(cat) || 0) + (Number(p.current_stock) || 0));
+  }
+  const cats = Array.from(byCategory.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  if (cats.length) {
+    upsertChart("stockCategory", "chartStockCategory", {
+      type: "bar",
+      data: {
+        labels: cats.map(([k]) => k),
+        datasets: [{ label: "Unidades", data: cats.map(([, v]) => v), backgroundColor: "rgba(14, 165, 233, 0.45)", borderRadius: 4 }],
+      },
+      options: { ...baseChartOptions(), indexAxis: "y" },
+    });
+  } else {
+    destroyChart("stockCategory");
+  }
+}
+
+function renderStockProducts() {
+  const term = ($("#stockProductSearch")?.value || "").trim().toLowerCase();
+  const rows = (data.stockProducts || []).filter((p) => {
+    return !term ||
+      p.id.toLowerCase().includes(term) ||
+      p.name.toLowerCase().includes(term) ||
+      (p.category || "").toLowerCase().includes(term) ||
+      (p.supplier || "").toLowerCase().includes(term);
+  });
+  const tbody = $("#stock-products-table tbody");
+  if (!tbody) return;
+  if (!rows.length) {
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="9">Nenhum produto encontrado.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = rows
+    .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"))
+    .map(
+      (p) => `<tr>
+        <td class="mono">${escapeHtml(p.id)}</td>
+        <td>${escapeHtml(p.name)}</td>
+        <td>${escapeHtml(p.category) || "-"}</td>
+        <td>${fmtInt(p.current_stock)}</td>
+        <td>${fmtInt(p.min_stock)}</td>
+        <td>${fmtInt(p.max_stock)}</td>
+        <td>${fmtMoney(p.stock_value)}</td>
+        <td>${stockStatusBadge(p)}</td>
+        <td class="col-actions">
+          <button class="btn-link" data-edit-stock-product="${escapeHtml(p.id)}">Editar</button>
+          <button class="btn-link danger" data-del-stock-product="${escapeHtml(p.id)}">Excluir</button>
+        </td>
+      </tr>`
+    )
+    .join("");
+}
+
+function renderStockMovements() {
+  const term = ($("#stockMovementSearch")?.value || "").trim().toLowerCase();
+  const type = $("#stockMovementTypeFilter")?.value || "";
+  const rows = (data.stockMovements || []).filter((m) => {
+    if (type && m.type !== type) return false;
+    return !term ||
+      (m.product_name || "").toLowerCase().includes(term) ||
+      (m.product_id || "").toLowerCase().includes(term) ||
+      (m.notes || "").toLowerCase().includes(term);
+  });
+  const tbody = $("#stock-movements-table tbody");
+  if (!tbody) return;
+  if (!rows.length) {
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="8">Nenhuma movimentacao encontrada.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = rows
+    .map(
+      (m) => `<tr>
+        <td>${fmtDate(m.movement_date)}</td>
+        <td><span class="mono">${escapeHtml(m.product_id)}</span> - ${escapeHtml(m.product_name)}</td>
+        <td>${movementTypeBadge(m.type)}</td>
+        <td>${fmtInt(m.quantity)}</td>
+        <td>${fmtMoney(m.unit_cost)}</td>
+        <td>${fmtMoney(m.total_value)}</td>
+        <td>${escapeHtml(m.notes) || "-"}</td>
+        <td class="col-actions">
+          <button class="btn-link" data-edit-stock-movement="${escapeHtml(m.id)}">Editar</button>
+          <button class="btn-link danger" data-del-stock-movement="${escapeHtml(m.id)}">Excluir</button>
+        </td>
+      </tr>`
+    )
+    .join("");
+}
+
+function stockProductFormHtml(p = {}) {
+  const editing = !!p.id;
+  return `
+    <div class="form-grid">
+      <div class="field">
+        <label>Codigo do produto *</label>
+        <input name="id" value="${escapeHtml(p.id)}" ${editing ? "readonly" : ""} required />
+      </div>
+      <div class="field">
+        <label>Categoria</label>
+        <input name="category" value="${escapeHtml(p.category)}" />
+      </div>
+      <div class="field full">
+        <label>Descricao *</label>
+        <input name="name" value="${escapeHtml(p.name)}" required />
+      </div>
+      <div class="field">
+        <label>Fornecedor</label>
+        <input name="supplier" value="${escapeHtml(p.supplier)}" />
+      </div>
+      <div class="field">
+        <label>Estoque minimo *</label>
+        <input name="min_stock" type="number" min="0" step="1" value="${escapeHtml(p.min_stock ?? 0)}" required />
+      </div>
+      <div class="field">
+        <label>Estoque maximo *</label>
+        <input name="max_stock" type="number" min="0" step="1" value="${escapeHtml(p.max_stock ?? 0)}" required />
+      </div>
+      <div class="field full">
+        <label>Observacoes</label>
+        <textarea name="notes">${escapeHtml(p.notes)}</textarea>
+      </div>
+    </div>`;
+}
+
+function openStockProductForm(product) {
+  const editing = !!product;
+  openModal(
+    editing ? "Editar produto" : "Novo produto",
+    stockProductFormHtml(product || {}),
+    async () => {
+      const payload = formValues();
+      if (editing) {
+        payload.id = product.id;
+        payload._baseline = product;
+        return await handleResult(window.api.updateStockProduct(payload), "Produto atualizado.");
+      }
+      return await handleResult(window.api.createStockProduct(payload), "Produto criado.");
+    }
+  );
+}
+
+function stockMovementFormHtml(m = {}) {
+  const productOptions = (data.stockProducts || [])
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"))
+    .map((p) => `<option value="${escapeHtml(p.id)}" ${p.id === m.product_id ? "selected" : ""}>${escapeHtml(p.id)} - ${escapeHtml(p.name)}</option>`)
+    .join("");
+  return `
+    <div class="form-grid">
+      <div class="field full">
+        <label>Produto *</label>
+        <select name="product_id" required>
+          <option value="">Selecione...</option>
+          ${productOptions}
+        </select>
+      </div>
+      <div class="field">
+        <label>Tipo *</label>
+        <select name="type" required>
+          <option value="entrada" ${m.type === "entrada" ? "selected" : ""}>Entrada</option>
+          <option value="saida" ${m.type === "saida" ? "selected" : ""}>Saida</option>
+        </select>
+      </div>
+      <div class="field">
+        ${brDateField({ label: "Data da movimentacao *", name: "movement_date", baseId: "stockMovementDate", iso: m.movement_date || data.today, required: true })}
+      </div>
+      <div class="field">
+        <label>Quantidade *</label>
+        <input name="quantity" type="number" min="1" step="1" value="${escapeHtml(m.quantity ?? 1)}" required />
+      </div>
+      <div class="field">
+        <label>Valor unitario</label>
+        <input name="unit_cost" inputmode="decimal" value="${escapeHtml(m.unit_cost || "")}" placeholder="0,00" />
+      </div>
+      <div class="field">
+        <label>Valor da transacao</label>
+        <input name="total_value" inputmode="decimal" value="${escapeHtml(m.total_value || "")}" placeholder="Calculado se vazio" />
+      </div>
+      <div class="field full">
+        <label>Observacoes</label>
+        <textarea name="notes">${escapeHtml(m.notes)}</textarea>
+      </div>
+    </div>`;
+}
+
+function openStockMovementForm(movement) {
+  if (!(data.stockProducts || []).length) return toast("Cadastre um produto antes.", "warn");
+  const editing = !!movement;
+  openModal(
+    editing ? "Editar movimentacao" : "Nova movimentacao",
+    stockMovementFormHtml(movement || {}),
+    async () => {
+      const payload = formValues();
+      if (!DateUtils.isValidISO(payload.movement_date)) {
+        showModalError("Informe uma data valida (dd/mm/aaaa).");
+        return { ok: false };
+      }
+      if (editing) {
+        payload.id = movement.id;
+        payload._baseline = movement;
+        return await handleResult(window.api.updateStockMovement(payload), "Movimentacao atualizada.");
+      }
+      return await handleResult(window.api.createStockMovement(payload), "Movimentacao registrada.");
+    },
+    editing ? "Salvar" : "Registrar"
+  );
+  initDateInputs($("#modalBody"));
+  markModalPristine();
 }
 
 // ----------------------------- Agencias -----------------------------
@@ -1907,6 +2197,8 @@ function renderFilesReport(report, paths) {
     rentals: "Alugueis",
     rentalItems: "Itens de aluguel",
     attachments: "Anexos (metadados)",
+    stockProducts: "Produtos (estoque)",
+    stockMovements: "Movimentacoes de estoque",
   };
   const keys = Object.keys(paths || (report || {}));
   container.innerHTML = keys
@@ -1947,6 +2239,28 @@ async function chooseDir() {
   }
 }
 
+async function importStockCsv(kind) {
+  const res = await window.api.importStockCsv(kind);
+  if (res && res.canceled) return;
+  if (res && res.ok === false) {
+    toast(res.message || "Importacao nao concluida.", "error");
+    return;
+  }
+  toast(res.message || "CSV importado com sucesso.", "success");
+  await loadSettings();
+  await loadAll();
+}
+
+async function downloadStockTemplate(kind) {
+  const res = await window.api.downloadStockTemplate(kind);
+  if (res && res.canceled) return;
+  if (res && res.ok === false) {
+    toast(res.message || "Nao foi possivel salvar o template.", "error");
+    return;
+  }
+  toast("Template CSV salvo.", "success");
+}
+
 // ----------------------------- Navegacao -----------------------------
 
 function switchView(view) {
@@ -1956,6 +2270,7 @@ function switchView(view) {
   $$(".view").forEach((v) => v.classList.toggle("active", v.id === `view-${view}`));
   if (view === "settings") loadSettings();
   if (view === "calendar") renderCalendar();
+  if (view === "stock") renderStock();
 }
 
 // ----------------------------- Eventos -----------------------------
@@ -2020,11 +2335,16 @@ function bindEvents() {
 
   // Botoes "novo"
   $("#addMaterialBtn").addEventListener("click", () => openMaterialForm(null));
+  $("#addStockProductBtn").addEventListener("click", () => openStockProductForm(null));
+  $("#addStockMovementBtn").addEventListener("click", () => openStockMovementForm(null));
   $("#addAgencyBtn").addEventListener("click", () => openAgencyForm(null));
   $("#addRentalBtn").addEventListener("click", () => openRentalForm());
 
   // Busca / filtros
   $("#materialSearch").addEventListener("input", renderMaterials);
+  $("#stockProductSearch").addEventListener("input", renderStockProducts);
+  $("#stockMovementSearch").addEventListener("input", renderStockMovements);
+  $("#stockMovementTypeFilter").addEventListener("change", renderStockMovements);
   $("#agencySearch").addEventListener("input", renderAgencies);
   [
     "#rentalSearch",
@@ -2073,6 +2393,10 @@ function bindEvents() {
   // Configuracoes
   $("#chooseDirBtn").addEventListener("click", chooseDir);
   $("#validateFilesBtn").addEventListener("click", validateFiles);
+  $("#importProductsBtn").addEventListener("click", () => importStockCsv("products"));
+  $("#importMovementsBtn").addEventListener("click", () => importStockCsv("movements"));
+  $("#templateProductsBtn").addEventListener("click", () => downloadStockTemplate("products"));
+  $("#templateMovementsBtn").addEventListener("click", () => downloadStockTemplate("movements"));
 
   // Delegacao de cliques nas tabelas (editar / excluir / devolver)
   document.addEventListener("click", (e) => {
@@ -2087,6 +2411,27 @@ function bindEvents() {
       const m = data.materials.find((x) => x.id === delMat);
       return confirmDialog(`Excluir o material "${m?.name}"? Esta acao nao pode ser desfeita.`, () =>
         handleResult(window.api.deleteMaterial(delMat), "Material excluido.")
+      );
+    }
+
+    const editStockProduct = t.getAttribute("data-edit-stock-product");
+    if (editStockProduct) return openStockProductForm(data.stockProducts.find((p) => p.id === editStockProduct));
+
+    const delStockProduct = t.getAttribute("data-del-stock-product");
+    if (delStockProduct) {
+      const p = data.stockProducts.find((x) => x.id === delStockProduct);
+      return confirmDialog(`Excluir o produto "${p?.name}"?`, () =>
+        handleResult(window.api.deleteStockProduct(delStockProduct), "Produto excluido.")
+      );
+    }
+
+    const editStockMovement = t.getAttribute("data-edit-stock-movement");
+    if (editStockMovement) return openStockMovementForm(data.stockMovements.find((m) => m.id === editStockMovement));
+
+    const delStockMovement = t.getAttribute("data-del-stock-movement");
+    if (delStockMovement) {
+      return confirmDialog("Excluir esta movimentacao de estoque?", () =>
+        handleResult(window.api.deleteStockMovement(delStockMovement), "Movimentacao excluida.")
       );
     }
 

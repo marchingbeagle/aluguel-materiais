@@ -69,6 +69,27 @@ const SCHEMAS = {
     { key: "size", header: "tamanho_bytes" },
     ...TIMESTAMP_COLUMNS,
   ],
+  stockProducts: [
+    { key: "id", header: "codigo_produto" },
+    { key: "name", header: "descricao" },
+    { key: "category", header: "categoria" },
+    { key: "supplier", header: "fornecedor" },
+    { key: "min_stock", header: "estoque_minimo" },
+    { key: "max_stock", header: "estoque_maximo" },
+    { key: "notes", header: "observacoes" },
+    ...TIMESTAMP_COLUMNS,
+  ],
+  stockMovements: [
+    { key: "id", header: "id" },
+    { key: "product_id", header: "codigo_produto" },
+    { key: "type", header: "tipo" },
+    { key: "movement_date", header: "data_movimentacao" },
+    { key: "quantity", header: "quantidade" },
+    { key: "unit_cost", header: "valor_unitario" },
+    { key: "total_value", header: "valor_transacao" },
+    { key: "notes", header: "observacoes" },
+    ...TIMESTAMP_COLUMNS,
+  ],
 };
 
 // Esquema do alugueis.csv da versao anterior (um material por aluguel).
@@ -108,7 +129,7 @@ const LEGACY_HEADER_TO_KEY = {
 };
 
 // Colunas numericas (por key interna), convertidas para Number na leitura.
-const NUMERIC_FIELDS = new Set(["total_quantity", "quantity", "size"]);
+const NUMERIC_FIELDS = new Set(["total_quantity", "quantity", "size", "min_stock", "max_stock", "unit_cost", "total_value"]);
 
 function headersOf(schema) {
   return schema.map((c) => c.header);

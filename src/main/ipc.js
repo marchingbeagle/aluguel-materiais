@@ -10,6 +10,7 @@ const lock = require("./lock");
 const availability = require("./availability");
 const attachments = require("./attachments");
 const rentalRules = require("./rentalRules");
+const stock = require("./stock");
 const dateUtils = require("../shared/dates");
 
 const { SCHEMAS } = store;
@@ -130,6 +131,8 @@ function buildSnapshot() {
   const rentals = readEntity("rentals");
   const items = readEntity("rentalItems");
   const attachRows = readEntity("attachments");
+  const stockProducts = readEntity("stockProducts");
+  const stockMovements = readEntity("stockMovements");
   const today = todayStr();
   const dataDir = settings.getDataDir();
 
@@ -220,11 +223,24 @@ function buildSnapshot() {
     totalAgencies: agencies.length,
   };
 
+  const inventory = stock.buildInventory(stockProducts, stockMovements);
+  const productById = new Map(stockProducts.map((p) => [p.id, p]));
+  const stockMovementsView = stockMovements
+    .map((m) => ({
+      ...m,
+      product_name: productById.get(m.product_id)?.name || "(produto removido)",
+      signed_quantity: stock.movementSignedQuantity(m),
+    }))
+    .sort((a, b) => (b.movement_date || "").localeCompare(a.movement_date || ""));
+
   return {
     materials: materialsView,
     agencies: agenciesSorted(agencies),
     rentals: rentalsView,
     rentalEntries,
+    stockProducts: inventory,
+    stockMovements: stockMovementsView,
+    stockStats: stock.buildStats(inventory, stockMovements),
     stats,
     today,
   };
@@ -281,6 +297,24 @@ async function mutateRentalData(fn) {
   });
 }
 
+async function mutateStockData(fn) {
+  const dir = settings.getDataDir();
+  const userId = settings.getUserId();
+  return lock.withLock(dir, userId, async () => {
+    ensureAllFiles();
+    const paths = settings.csvPaths();
+    const state = {
+      products: store.readAll(paths.stockProducts, SCHEMAS.stockProducts),
+      movements: store.readAll(paths.stockMovements, SCHEMAS.stockMovements),
+    };
+    const next = await fn(state);
+    if (!next) return;
+    markSelfWrite();
+    store.writeAll(paths.stockProducts, SCHEMAS.stockProducts, next.products);
+    store.writeAll(paths.stockMovements, SCHEMAS.stockMovements, next.movements);
+  });
+}
+
 function fail(code, message) {
   return { ok: false, code, message };
 }
@@ -330,6 +364,40 @@ function validateAgency(data) {
   if (!code) errors.push("Codigo e obrigatorio.");
   else if (!/^\d+$/.test(code)) errors.push("Codigo deve conter apenas numeros (ex.: 01, 02, 03).");
   return { errors, clean: { name, code } };
+}
+
+function validateStockProduct(data, { requireId = true } = {}) {
+  const errors = [];
+  const id = String(data.id || data.code || "").trim();
+  const name = String(data.name || "").trim();
+  const min = parseIntStrict(data.min_stock);
+  const max = parseIntStrict(data.max_stock);
+  if (requireId && !id) errors.push("Codigo do produto e obrigatorio.");
+  if (id && !/^[A-Za-z0-9._-]+$/.test(id)) errors.push("Codigo do produto deve usar letras, numeros, ponto, hifen ou underline.");
+  if (!name) errors.push("Descricao e obrigatoria.");
+  if (min === null || min < 0) errors.push("Estoque minimo deve ser um numero inteiro >= 0.");
+  if (max === null || max < 0) errors.push("Estoque maximo deve ser um numero inteiro >= 0.");
+  return { errors, clean: { id, name, min, max } };
+}
+
+function validateStockMovement(data) {
+  const errors = [];
+  const productId = String(data.product_id || "").trim();
+  const type = stock.normalizeType(data.type);
+  const movementDate = String(data.movement_date || "").trim();
+  const quantity = parseIntStrict(data.quantity);
+  const unitCost = stock.parseNumber(data.unit_cost);
+  let totalValue = stock.parseNumber(data.total_value);
+
+  if (!productId) errors.push("Produto e obrigatorio.");
+  if (!type) errors.push("Tipo deve ser Entrada ou Saida.");
+  if (!isValidDate(movementDate)) errors.push("Data da movimentacao invalida.");
+  if (quantity === null || quantity <= 0) errors.push("Quantidade deve ser um numero inteiro maior que zero.");
+  if (unitCost < 0) errors.push("Valor unitario deve ser >= 0.");
+  if (totalValue < 0) errors.push("Valor da transacao deve ser >= 0.");
+  if (!totalValue && unitCost > 0 && quantity > 0) totalValue = unitCost * quantity;
+
+  return { errors, clean: { productId, type, movementDate, quantity, unitCost, totalValue } };
 }
 
 // ------------------------- Anexos: copia + rollback --------------------------
@@ -403,6 +471,88 @@ function registerIpc() {
       report[key] = { path: p, existedBefore, exists: fs.existsSync(p), readable, created: !existedBefore };
     }
     return report;
+  });
+
+  ipcMain.handle("stock:template", async (_e, kind) => {
+    const templateKind = kind === "movements" ? "movements" : "products";
+    const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+    const defaultName = templateKind === "movements" ? "template_movimentacoes_estoque.csv" : "template_produtos.csv";
+    const res = await dialog.showSaveDialog(win, {
+      title: "Salvar template CSV",
+      defaultPath: path.join(settings.getDataDir(), defaultName),
+      filters: [{ name: "CSV", extensions: ["csv"] }],
+    });
+    if (res.canceled || !res.filePath) return { ok: false, canceled: true };
+    fs.writeFileSync(res.filePath, stock.templateCsv(templateKind), "utf8");
+    return done({ path: res.filePath });
+  });
+
+  ipcMain.handle("stock:importCsv", async (_e, kind) => {
+    const importKind = kind === "movements" ? "movements" : "products";
+    const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+    const res = await dialog.showOpenDialog(win, {
+      title: importKind === "movements" ? "Importar entradas e saidas" : "Importar produtos",
+      properties: ["openFile"],
+      filters: [{ name: "CSV", extensions: ["csv"] }],
+    });
+    if (res.canceled || !res.filePaths.length) return { ok: false, canceled: true };
+
+    let raw;
+    try {
+      raw = fs.readFileSync(res.filePaths[0], "utf8");
+    } catch (err) {
+      return fail("IO", `Nao foi possivel ler o CSV: ${err.message}`);
+    }
+
+    const stamp = nowStamp();
+    const parsed =
+      importKind === "movements" ? stock.parseMovementsCsv(raw, stamp) : stock.parseProductsCsv(raw, stamp);
+    if (!parsed.length) return fail("VALIDATION", "Nenhuma linha valida foi encontrada no CSV.");
+
+    let imported = 0;
+    let updated = 0;
+    let skipped = 0;
+
+    await mutateStockData((state) => {
+      if (importKind === "products") {
+        const byId = new Map(state.products.map((p, idx) => [p.id, idx]));
+        const products = [...state.products];
+        for (const p of parsed) {
+          const idx = byId.get(p.id);
+          if (idx === undefined) {
+            products.push(p);
+            byId.set(p.id, products.length - 1);
+            imported += 1;
+          } else {
+            products[idx] = { ...products[idx], ...p, adicionado_em: products[idx].adicionado_em, alterado_em: stamp };
+            updated += 1;
+          }
+        }
+        return { products, movements: state.movements };
+      }
+
+      const productIds = new Set(state.products.map((p) => p.id));
+      const movementIds = new Set(state.movements.map((m) => m.id));
+      const movements = [...state.movements];
+      for (const m of parsed) {
+        if (!productIds.has(m.product_id) || movementIds.has(m.id)) {
+          skipped += 1;
+          continue;
+        }
+        movements.push(m);
+        movementIds.add(m.id);
+        imported += 1;
+      }
+      return { products: state.products, movements };
+    });
+
+    const label = importKind === "movements" ? "movimentacoes" : "produtos";
+    return done({
+      imported,
+      updated,
+      skipped,
+      message: `${imported} ${label} importado(s), ${updated} atualizado(s), ${skipped} ignorado(s).`,
+    });
   });
 
   ipcMain.handle("data:loadAll", () => buildSnapshot());
@@ -618,6 +768,161 @@ function registerIpc() {
       return rows.filter((r) => r.id !== id);
     });
     if (blocked) return fail("VALIDATION", "Nao e possivel excluir: esta agencia possui aluguel ativo.");
+    return done();
+  });
+
+  // ------------------------------ Estoque -----------------------------------
+
+  ipcMain.handle("stockProduct:create", async (_e, data) => {
+    const { errors, clean } = validateStockProduct(data);
+    if (errors.length) return fail("VALIDATION", errors.join(" "));
+
+    let duplicate = false;
+    await mutate("stockProducts", (rows) => {
+      if (rows.some((p) => p.id === clean.id)) {
+        duplicate = true;
+        return rows;
+      }
+      rows.push({
+        id: clean.id,
+        name: clean.name,
+        category: String(data.category || "").trim(),
+        supplier: String(data.supplier || "").trim(),
+        min_stock: clean.min,
+        max_stock: clean.max,
+        notes: String(data.notes || "").trim(),
+        adicionado_em: nowStamp(),
+        alterado_em: "",
+      });
+      return rows;
+    });
+    if (duplicate) return fail("VALIDATION", `Codigo "${clean.id}" ja esta em uso.`);
+    return done();
+  });
+
+  ipcMain.handle("stockProduct:update", async (_e, data) => {
+    const { errors, clean } = validateStockProduct(data);
+    if (errors.length) return fail("VALIDATION", errors.join(" "));
+
+    let notFound = false;
+    let conflict = false;
+    await mutate("stockProducts", (rows) => {
+      const idx = rows.findIndex((p) => p.id === clean.id);
+      if (idx === -1) {
+        notFound = true;
+        return rows;
+      }
+      if (changedSinceBaseline(rows[idx], data._baseline, store.keysOf(SCHEMAS.stockProducts))) {
+        conflict = true;
+        return rows;
+      }
+      rows[idx] = {
+        ...rows[idx],
+        name: clean.name,
+        category: String(data.category || "").trim(),
+        supplier: String(data.supplier || "").trim(),
+        min_stock: clean.min,
+        max_stock: clean.max,
+        notes: String(data.notes || "").trim(),
+        alterado_em: nowStamp(),
+      };
+      return rows;
+    });
+    if (notFound) return fail("NOT_FOUND", "Produto nao encontrado.");
+    if (conflict) return fail("CONFLICT", "Este produto foi alterado por outro usuario. Recarregue e tente novamente.");
+    return done();
+  });
+
+  ipcMain.handle("stockProduct:delete", async (_e, id) => {
+    let blocked = false;
+    await mutateStockData((state) => {
+      if (state.movements.some((m) => m.product_id === id)) {
+        blocked = true;
+        return null;
+      }
+      return { products: state.products.filter((p) => p.id !== id), movements: state.movements };
+    });
+    if (blocked) return fail("VALIDATION", "Nao e possivel excluir: existem entradas ou saidas deste produto.");
+    return done();
+  });
+
+  ipcMain.handle("stockMovement:create", async (_e, data) => {
+    const { errors, clean } = validateStockMovement(data);
+    if (errors.length) return fail("VALIDATION", errors.join(" "));
+
+    let notFound = false;
+    await mutateStockData((state) => {
+      if (!state.products.some((p) => p.id === clean.productId)) {
+        notFound = true;
+        return null;
+      }
+      const stamp = nowStamp();
+      return {
+        products: state.products,
+        movements: [
+          ...state.movements,
+          {
+            id: store.newId(),
+            product_id: clean.productId,
+            type: clean.type,
+            movement_date: clean.movementDate,
+            quantity: clean.quantity,
+            unit_cost: clean.unitCost,
+            total_value: clean.totalValue,
+            notes: String(data.notes || "").trim(),
+            adicionado_em: stamp,
+            alterado_em: "",
+          },
+        ],
+      };
+    });
+    if (notFound) return fail("NOT_FOUND", "Produto nao encontrado.");
+    return done();
+  });
+
+  ipcMain.handle("stockMovement:update", async (_e, data) => {
+    const { errors, clean } = validateStockMovement(data);
+    if (errors.length) return fail("VALIDATION", errors.join(" "));
+
+    let notFound = false;
+    let productMissing = false;
+    let conflict = false;
+    await mutateStockData((state) => {
+      if (!state.products.some((p) => p.id === clean.productId)) {
+        productMissing = true;
+        return null;
+      }
+      const idx = state.movements.findIndex((m) => m.id === data.id);
+      if (idx === -1) {
+        notFound = true;
+        return null;
+      }
+      if (changedSinceBaseline(state.movements[idx], data._baseline, store.keysOf(SCHEMAS.stockMovements))) {
+        conflict = true;
+        return null;
+      }
+      const movements = [...state.movements];
+      movements[idx] = {
+        ...movements[idx],
+        product_id: clean.productId,
+        type: clean.type,
+        movement_date: clean.movementDate,
+        quantity: clean.quantity,
+        unit_cost: clean.unitCost,
+        total_value: clean.totalValue,
+        notes: String(data.notes || "").trim(),
+        alterado_em: nowStamp(),
+      };
+      return { products: state.products, movements };
+    });
+    if (productMissing) return fail("NOT_FOUND", "Produto nao encontrado.");
+    if (notFound) return fail("NOT_FOUND", "Movimentacao nao encontrada.");
+    if (conflict) return fail("CONFLICT", "Esta movimentacao foi alterada por outro usuario. Recarregue e tente novamente.");
+    return done();
+  });
+
+  ipcMain.handle("stockMovement:delete", async (_e, id) => {
+    await mutate("stockMovements", (rows) => rows.filter((m) => m.id !== id));
     return done();
   });
 
