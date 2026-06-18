@@ -38,6 +38,8 @@ describe("attachments", () => {
     test("remove diretorios do nome (sem path traversal)", () => {
       expect(attachments.sanitizeFileName("..\\..\\windows\\evil.pdf")).toBe("evil.pdf");
       expect(attachments.sanitizeFileName("../../etc/passwd.txt")).toBe("passwd.txt");
+      expect(attachments.sanitizeFileName("C:\\Users\\erik\\nota.DOCX")).toBe("nota.docx");
+      expect(attachments.sanitizeFileName("pasta\\subpasta/foto.JPG")).toBe("foto.jpg");
     });
 
     test("protege nomes reservados do Windows e nomes vazios", () => {
@@ -62,6 +64,9 @@ describe("attachments", () => {
 
     test("rejeita caminhos absolutos e com '..'", () => {
       expect(attachments.absolutePathOf(dataDir, "C:\\Windows\\system32")).toBeNull();
+      expect(attachments.absolutePathOf(dataDir, "C:Windows\\system32")).toBeNull();
+      expect(attachments.absolutePathOf(dataDir, "\\\\servidor\\share\\doc.pdf")).toBeNull();
+      expect(attachments.absolutePathOf(dataDir, "/tmp/doc.pdf")).toBeNull();
       expect(attachments.absolutePathOf(dataDir, "anexos/../../fora.txt")).toBeNull();
       expect(attachments.absolutePathOf(dataDir, "")).toBeNull();
     });

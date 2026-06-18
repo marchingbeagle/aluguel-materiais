@@ -17,11 +17,30 @@
           </div>
         </div>
         <nav class="nav">
-          <button class="nav-item active" data-view="dashboard">Painel</button>
-          <button class="nav-item" data-view="materials">Materiais</button>
-          <button class="nav-item" data-view="agencies">Agencias</button>
-          <button class="nav-item" data-view="rentals">Alugueis</button>
-          <button class="nav-item" data-view="calendar">Calendario</button>
+          <button class="nav-item active" data-view="dashboard">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1"></rect><rect x="14" y="3" width="7" height="5" rx="1"></rect><rect x="14" y="12" width="7" height="9" rx="1"></rect><rect x="3" y="16" width="7" height="5" rx="1"></rect></svg>
+            <span>Painel</span>
+          </button>
+          <button class="nav-item" data-view="materials">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><path d="M3.3 7 12 12l8.7-5"></path><path d="M12 22V12"></path></svg>
+            <span>Materiais</span>
+          </button>
+          <button class="nav-item" data-view="stock">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h16"></path><path d="M5 9l1 11h12l1-11"></path><path d="M8 9V6a4 4 0 0 1 8 0v3"></path><path d="M9 14h6"></path></svg>
+            <span>Estoque</span>
+          </button>
+          <button class="nav-item" data-view="agencies">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21h18"></path><path d="M5 21V7l7-4 7 4v14"></path><path d="M9 21v-6h6v6"></path><path d="M9 9h.01"></path><path d="M15 9h.01"></path><path d="M12 12h.01"></path></svg>
+            <span>Agencias</span>
+          </button>
+          <button class="nav-item" data-view="rentals">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13"></path><path d="M8 12h13"></path><path d="M8 18h13"></path><path d="M3 6h.01"></path><path d="M3 12h.01"></path><path d="M3 18h.01"></path></svg>
+            <span>Alugueis</span>
+          </button>
+          <button class="nav-item" data-view="calendar">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"></rect><path d="M16 2v4"></path><path d="M8 2v4"></path><path d="M3 10h18"></path><path d="M8 14h.01"></path><path d="M12 14h.01"></path><path d="M16 14h.01"></path><path d="M8 18h.01"></path><path d="M12 18h.01"></path></svg>
+            <span>Calendario</span>
+          </button>
         </nav>
         <div class="sidebar-footer">
           <span id="syncDot" class="sync-dot" title="Estado da sincronizacao"></span>
@@ -197,6 +216,70 @@
           </div>
         </section>
 
+        <!-- ESTOQUE -->
+        <section id="view-stock" class="view">
+          <header class="view-header">
+            <div>
+              <h1>Estoque</h1>
+              <p class="muted">Produtos, entradas, saidas e alertas de reposicao.</p>
+            </div>
+            <div class="header-actions">
+              <button class="btn" id="addStockMovementBtn">Nova movimentacao</button>
+              <button class="btn btn-primary" id="addStockProductBtn">Novo produto</button>
+            </div>
+          </header>
+
+          <div class="kpi-grid stock-kpis" id="stockKpiGrid"></div>
+
+          <div class="dash-row dash-row-2">
+            <div class="panel">
+              <div class="panel-head"><h2>Situacao do estoque</h2></div>
+              <div class="chart-box"><canvas id="chartStockStatus"></canvas></div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><h2>Estoque por categoria</h2></div>
+              <div class="chart-box"><canvas id="chartStockCategory"></canvas></div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <h2>Produtos</h2>
+              <input type="search" id="stockProductSearch" placeholder="Buscar por codigo, descricao, categoria..." />
+            </div>
+            <div class="table-wrap table-scroll">
+              <table id="stock-products-table">
+                <thead>
+                  <tr><th>Codigo</th><th>Produto</th><th>Categoria</th><th>Atual</th><th>Min.</th><th>Max.</th><th>Valor estoque</th><th>Situacao</th><th class="col-actions">Acoes</th></tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <h2>Entradas e saidas</h2>
+              <div class="stock-filters">
+                <input type="search" id="stockMovementSearch" placeholder="Buscar produto..." />
+                <select id="stockMovementTypeFilter">
+                  <option value="">Todos os tipos</option>
+                  <option value="entrada">Entradas</option>
+                  <option value="saida">Saidas</option>
+                </select>
+              </div>
+            </div>
+            <div class="table-wrap table-scroll">
+              <table id="stock-movements-table">
+                <thead>
+                  <tr><th>Data</th><th>Produto</th><th>Tipo</th><th>Qtd</th><th>Valor unit.</th><th>Valor transacao</th><th>Obs.</th><th class="col-actions">Acoes</th></tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
         <!-- AGENCIAS -->
         <section id="view-agencies" class="view">
           <header class="view-header">
@@ -324,6 +407,28 @@
             <h2>Identificacao deste computador</h2>
             <p class="muted">Usado para controle de concorrencia (lock) ao salvar.</p>
             <code id="userIdValue" class="mono"></code>
+          </div>
+          <div class="panel">
+            <h2>Importacao de estoque</h2>
+            <p class="muted">Carregue produtos e movimentacoes a partir de CSV. Produtos com o mesmo codigo sao atualizados; movimentacoes ja importadas sao ignoradas.</p>
+            <div class="import-grid">
+              <div class="import-card">
+                <strong>Produtos</strong>
+                <span class="muted">Colunas: codigo, descricao, categoria, fornecedor, minimo e maximo.</span>
+                <div class="import-actions">
+                  <button class="btn btn-primary" id="importProductsBtn">Importar CSV</button>
+                  <button class="btn" id="templateProductsBtn">Baixar template</button>
+                </div>
+              </div>
+              <div class="import-card">
+                <strong>Entradas e saidas</strong>
+                <span class="muted">Colunas: codigo do produto, tipo, data, quantidade e valores.</span>
+                <div class="import-actions">
+                  <button class="btn btn-primary" id="importMovementsBtn">Importar CSV</button>
+                  <button class="btn" id="templateMovementsBtn">Baixar template</button>
+                </div>
+              </div>
+            </div>
           </div>
         </section>
       </main>

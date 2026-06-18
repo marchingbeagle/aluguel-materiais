@@ -18,6 +18,8 @@ const FILE_NAMES = {
   rentals: "alugueis.csv",
   rentalItems: "itens_aluguel.csv",
   attachments: "anexos_aluguel.csv",
+  stockProducts: "produtos.csv",
+  stockMovements: "movimentacoes_estoque.csv",
 };
 
 // Nomes dos arquivos no formato antigo (virgula + cabecalhos em ingles),
@@ -93,6 +95,8 @@ function csvPaths() {
     rentals: path.join(dir, FILE_NAMES.rentals),
     rentalItems: path.join(dir, FILE_NAMES.rentalItems),
     attachments: path.join(dir, FILE_NAMES.attachments),
+    stockProducts: path.join(dir, FILE_NAMES.stockProducts),
+    stockMovements: path.join(dir, FILE_NAMES.stockMovements),
   };
 }
 

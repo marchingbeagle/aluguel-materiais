@@ -33,11 +33,20 @@ function isAllowedExtension(name) {
   return ALLOWED_EXTENSIONS.includes(extensionOf(name));
 }
 
+function normalizeSeparators(value) {
+  return String(value || "").replace(/\\/g, "/");
+}
+
+function isAbsolutePathAnyPlatform(value) {
+  const text = String(value || "");
+  return path.isAbsolute(text) || path.win32.isAbsolute(text) || path.posix.isAbsolute(text);
+}
+
 // Gera um nome de arquivo seguro para Windows/macOS/Linux a partir do nome
 // original: remove diretorio, troca caracteres invalidos, limita o tamanho e
 // evita nomes reservados. A extensao e normalizada para minusculas.
 function sanitizeFileName(name) {
-  let base = path.basename(String(name || ""));
+  let base = path.posix.basename(normalizeSeparators(name));
   base = base
     .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
     .replace(/\s+/g, " ")
@@ -71,8 +80,9 @@ function relPathFor(rentalId, fileName) {
 // Resolve um caminho relativo do CSV para absoluto, garantindo que ele nao
 // escape da pasta de dados (rejeita absolutos e ".."). Retorna null se invalido.
 function absolutePathOf(dataDir, relPath) {
-  const normalized = String(relPath || "").replace(/\\/g, "/").trim();
-  if (!normalized || path.isAbsolute(normalized)) return null;
+  const raw = String(relPath || "").trim();
+  const normalized = normalizeSeparators(raw).trim();
+  if (!normalized || isAbsolutePathAnyPlatform(raw) || /^[a-zA-Z]:/.test(normalized)) return null;
   if (normalized.split("/").some((part) => part === "..")) return null;
   const root = path.resolve(dataDir);
   const abs = path.resolve(root, normalized);

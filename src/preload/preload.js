@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld("api", {
   getSettings: () => ipcRenderer.invoke("settings:get"),
   chooseDir: () => ipcRenderer.invoke("settings:chooseDir"),
   validateFiles: () => ipcRenderer.invoke("files:validate"),
+  importStockCsv: (kind) => ipcRenderer.invoke("stock:importCsv", kind),
+  downloadStockTemplate: (kind) => ipcRenderer.invoke("stock:template", kind),
 
   // Dados
   loadAll: () => ipcRenderer.invoke("data:loadAll"),
@@ -20,6 +22,14 @@ contextBridge.exposeInMainWorld("api", {
   createMaterial: (data) => ipcRenderer.invoke("material:create", data),
   updateMaterial: (data) => ipcRenderer.invoke("material:update", data),
   deleteMaterial: (id) => ipcRenderer.invoke("material:delete", id),
+
+  // Estoque de produtos
+  createStockProduct: (data) => ipcRenderer.invoke("stockProduct:create", data),
+  updateStockProduct: (data) => ipcRenderer.invoke("stockProduct:update", data),
+  deleteStockProduct: (id) => ipcRenderer.invoke("stockProduct:delete", id),
+  createStockMovement: (data) => ipcRenderer.invoke("stockMovement:create", data),
+  updateStockMovement: (data) => ipcRenderer.invoke("stockMovement:update", data),
+  deleteStockMovement: (id) => ipcRenderer.invoke("stockMovement:delete", id),
 
   // Agencias
   createAgency: (data) => ipcRenderer.invoke("agency:create", data),
