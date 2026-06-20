@@ -37,7 +37,9 @@ function setupWatcher() {
   if (watcher) {
     try {
       watcher.close();
-    } catch (_err) {}
+    } catch {
+      // Watcher ja encerrado ou indisponivel.
+    }
     watcher = null;
   }
 

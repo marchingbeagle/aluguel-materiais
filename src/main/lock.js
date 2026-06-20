@@ -28,7 +28,7 @@ function lockPath(dir) {
 function readLock(file) {
   try {
     return JSON.parse(fs.readFileSync(file, "utf8"));
-  } catch (_err) {
+  } catch {
     return null;
   }
 }
@@ -78,7 +78,9 @@ async function acquire(dir, userId) {
         // Lock orfao: remove e tenta de novo no proximo laco.
         try {
           fs.unlinkSync(file);
-        } catch (_ignore) {}
+        } catch {
+          // Outro processo pode ter removido o lock antes desta tentativa.
+        }
         continue;
       }
 
@@ -101,7 +103,9 @@ function makeHandle(file, userId) {
         info.heartbeatAt = Date.now();
         try {
           fs.writeFileSync(file, JSON.stringify(info));
-        } catch (_ignore) {}
+        } catch {
+          // Heartbeat e melhor-esforco; a proxima operacao valida o lock.
+        }
       }
     },
     release() {
@@ -112,7 +116,9 @@ function makeHandle(file, userId) {
       if (!info || info.userId === userId) {
         try {
           fs.unlinkSync(file);
-        } catch (_ignore) {}
+        } catch {
+          // Release tolerante: o lock pode ja ter sido removido.
+        }
       }
     },
   };

@@ -160,7 +160,7 @@ function readAll(filePath, schema) {
   let raw;
   try {
     raw = fs.readFileSync(filePath, "utf8");
-  } catch (_err) {
+  } catch {
     return [];
   }
 
@@ -231,7 +231,9 @@ function writeAll(filePath, schema, rows) {
     // Em alguns sistemas/cloud o rename por cima pode falhar; tenta limpar o tmp.
     try {
       fs.unlinkSync(tmpPath);
-    } catch (_ignore) {}
+    } catch {
+      // Se a limpeza falhar, o erro original de rename continua sendo propagado.
+    }
     throw err;
   }
 }
@@ -246,7 +248,7 @@ function migrateLegacy(oldPath, newPath, schema) {
   let raw;
   try {
     raw = fs.readFileSync(oldPath, "utf8").replace(/^\uFEFF/, "");
-  } catch (_err) {
+  } catch {
     return false;
   }
 
@@ -356,7 +358,7 @@ function readHeaderLine(filePath) {
   let raw;
   try {
     raw = fs.readFileSync(filePath, "utf8");
-  } catch (_err) {
+  } catch {
     return null;
   }
   raw = raw.replace(/^\uFEFF/, "");
@@ -393,7 +395,7 @@ function fileSignature(filePath) {
   try {
     const st = fs.statSync(filePath);
     return `${st.mtimeMs}:${st.size}`;
-  } catch (_err) {
+  } catch {
     return "missing";
   }
 }

@@ -48,7 +48,9 @@ function isAbsolutePathAnyPlatform(value) {
 function sanitizeFileName(name) {
   let base = path.posix.basename(normalizeSeparators(name));
   base = base
-    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
+    .split("")
+    .map((ch) => (ch.charCodeAt(0) <= 31 || /[<>:"/\\|?*]/.test(ch) ? "_" : ch))
+    .join("")
     .replace(/\s+/g, " ")
     .trim()
     .replace(/[. ]+$/g, "");
@@ -103,7 +105,7 @@ function validateSource(sourcePath, originalName) {
   let st;
   try {
     st = fs.statSync(sourcePath);
-  } catch (_err) {
+  } catch {
     return { ok: false, message: `Arquivo nao encontrado: "${name}".` };
   }
   if (!st.isFile()) return { ok: false, message: `"${name}" nao e um arquivo.` };
@@ -159,11 +161,15 @@ function removeStoredFile(dataDir, relPath) {
   if (!abs) return;
   try {
     fs.unlinkSync(abs);
-  } catch (_err) {}
+  } catch {
+    // Arquivo ja ausente: nada a remover.
+  }
   try {
     const dir = path.dirname(abs);
     if (fs.existsSync(dir) && !fs.readdirSync(dir).length) fs.rmdirSync(dir);
-  } catch (_err) {}
+  } catch {
+    // Pasta ainda indisponivel/em uso: limpeza sera tentada em outra operacao.
+  }
 }
 
 // Remove toda a pasta de anexos de um aluguel (exclusao do aluguel ou rollback
@@ -173,7 +179,9 @@ function removeRentalDir(dataDir, rentalId) {
   const dir = path.join(dataDir, ...ATTACHMENTS_SUBDIR_PARTS, String(rentalId));
   try {
     fs.rmSync(dir, { recursive: true, force: true });
-  } catch (_err) {}
+  } catch {
+    // Remocao tolerante: a pasta pode ja nao existir.
+  }
 }
 
 function storedFileExists(dataDir, relPath) {

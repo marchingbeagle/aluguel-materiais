@@ -45,7 +45,7 @@ function readRaw() {
     const txt = fs.readFileSync(settingsPath(), "utf8");
     const parsed = JSON.parse(txt);
     return parsed && typeof parsed === "object" ? parsed : {};
-  } catch (_err) {
+  } catch {
     return {};
   }
 }

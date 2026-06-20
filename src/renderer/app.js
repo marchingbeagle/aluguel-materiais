@@ -204,7 +204,7 @@ function initDateInputs(root) {
       try {
         if (typeof native.showPicker === "function") native.showPicker();
         else native.focus();
-      } catch (_err) {
+      } catch {
         native.focus();
       }
     });
@@ -399,10 +399,6 @@ function enhanceRequiredLabels(root = document) {
   });
 }
 
-function detailButton(detail, label = "Ver detalhes") {
-  return `<button type="button" class="btn btn-sm btn-ghost btn-detail" data-detail="${escapeHtml(detail)}">${escapeHtml(label)}</button>`;
-}
-
 function detailTable(headers, rows, emptyText = "Nenhum dado para detalhar.") {
   if (!rows.length) return `<p class="opp-empty detail-empty">${escapeHtml(emptyText)}</p>`;
   return `<div class="table-wrap detail-table-wrap">
@@ -489,7 +485,9 @@ function upsertChart(key, canvasId, config) {
   if (dashCharts[key]) {
     try {
       dashCharts[key].destroy();
-    } catch (_e) {}
+    } catch {
+      // Chart.js pode ja ter destruido a instancia.
+    }
   }
   dashCharts[key] = new Chart(canvas.getContext("2d"), config);
 }
@@ -835,7 +833,9 @@ function destroyChart(key) {
   if (dashCharts[key]) {
     try {
       dashCharts[key].destroy();
-    } catch (_e) {}
+    } catch {
+      // Chart.js pode ja ter destruido a instancia.
+    }
     delete dashCharts[key];
   }
 }
@@ -2578,7 +2578,7 @@ function openRentalForm(rental) {
         excludeId,
       });
       availMap = res && res.ok ? res.available || {} : {};
-    } catch (_err) {
+    } catch {
       availMap = {};
     }
     loading = false;
