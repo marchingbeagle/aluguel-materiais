@@ -13,6 +13,7 @@ function basePayload(extra = {}) {
   return {
     agency_id: "ag1",
     event_name: "Feira do Agronegocio",
+    process_number: " FLUID-12345 ",
     checkout_date: "2026-06-10",
     expected_return_date: "2026-06-12",
     notes: "",
@@ -27,6 +28,7 @@ describe("rentalRules.validateRentalPayload", () => {
     expect(errors).toEqual([]);
     expect(clean.items).toEqual([{ id: "", material_id: "balao", quantity: 1 }]);
     expect(clean.event_name).toBe("Feira do Agronegocio");
+    expect(clean.process_number).toBe("FLUID-12345");
   });
 
   test("aluguel valido com varios materiais e quantidades diferentes", () => {

@@ -68,6 +68,7 @@ function validateRentalPayload(data) {
     clean: {
       agency_id: agencyId,
       event_name: String(data?.event_name || "").trim(),
+      process_number: String(data?.process_number || "").trim(),
       checkout_date: checkout,
       expected_return_date: expectedReturn,
       notes: String(data?.notes || "").trim(),
