@@ -4,6 +4,8 @@
   "description": "Controle de aluguel/emprestimo de materiais de comunicacao e brindes para cooperativa. Banco de dados em CSV, sem servidor externo.",
   "main": "src/main/main.js",
   "scripts": {
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
     "test": "jest --runInBand",
     "start": "npm test && electron .",
     "dev": "npm test && electron . --enable-logging",
@@ -15,8 +17,11 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "electron": "^42.4.0",
     "electron-builder": "^24.13.3",
+    "eslint": "^10.5.0",
+    "globals": "^17.6.0",
     "jest": "^30.4.2"
   },
   "dependencies": {
