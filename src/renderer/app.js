@@ -13,6 +13,15 @@ let data = {
 };
 let currentView = "dashboard";
 
+const tableSort = {
+  materials: { key: "name", dir: "asc" },
+  agencies: { key: "code", dir: "asc" },
+  rentals: { key: "checkout_date", dir: "desc" },
+  stockPurchase: { key: "needed", dir: "desc" },
+  stockProducts: { key: "needed", dir: "desc" },
+  stockMovements: { key: "movement_date", dir: "desc" },
+};
+
 // Estado do calendario.
 let calMode = "month"; // "month" | "week"
 let calRef = new Date();
@@ -38,6 +47,74 @@ function escapeHtml(value) {
 // Toda a logica de datas e centralizada em window.DateUtils (src/shared/dates.js).
 function fmtDate(iso) {
   return DateUtils.formatBR(iso, "-");
+}
+
+function normalizeForSort(value) {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "number") return value;
+  const text = String(value).trim();
+  const asNumber = Number(text);
+  if (text !== "" && Number.isFinite(asNumber)) return asNumber;
+  return text.toLocaleLowerCase("pt-BR");
+}
+
+function compareValues(a, b) {
+  const av = normalizeForSort(a);
+  const bv = normalizeForSort(b);
+  if (typeof av === "number" && typeof bv === "number") return av - bv;
+  return String(av).localeCompare(String(bv), "pt-BR", { numeric: true, sensitivity: "base" });
+}
+
+function sortRows(rows, table, valueOf) {
+  const state = tableSort[table];
+  if (!state) return rows;
+  return rows.sort((a, b) => {
+    const cmp = compareValues(valueOf(a, state.key), valueOf(b, state.key));
+    return state.dir === "desc" ? -cmp : cmp;
+  });
+}
+
+function setTableSort(table, key, defaultDir = "asc") {
+  const current = tableSort[table] || { key: "", dir: defaultDir };
+  tableSort[table] = current.key === key
+    ? { key, dir: current.dir === "asc" ? "desc" : "asc" }
+    : { key, dir: defaultDir };
+}
+
+function renderSortIndicators() {
+  $$("[data-sort-table][data-sort-key]").forEach((th) => {
+    const state = tableSort[th.dataset.sortTable];
+    const active = state && state.key === th.dataset.sortKey;
+    th.classList.toggle("sort-active", !!active);
+    th.dataset.sortDir = active ? state.dir : "";
+    th.setAttribute("aria-sort", active ? (state.dir === "asc" ? "ascending" : "descending") : "none");
+  });
+}
+
+function csvEscape(value) {
+  const text = String(value ?? "");
+  return /[;"\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function csvNumber(value) {
+  const n = Number(value) || 0;
+  return String(n).replace(".", ",");
+}
+
+function downloadCsv(fileName, headers, rows) {
+  const csv = "\uFEFF" + [
+    headers.map(csvEscape).join(";"),
+    ...rows.map((row) => row.map(csvEscape).join(";")),
+  ].join("\n") + "\n";
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 // ----------------------------- Entrada de datas (DD/MM/YYYY) -----------------------------
@@ -211,6 +288,7 @@ function isModalDirty() {
 function openModal(title, bodyHtml, onSubmit, submitLabel = "Salvar") {
   $("#modalTitle").textContent = title;
   $("#modalBody").innerHTML = bodyHtml;
+  enhanceRequiredLabels($("#modalBody"));
   $("#modalSubmit").textContent = submitLabel;
   $("#modalError").classList.add("hidden");
   modalSubmitHandler = onSubmit;
@@ -223,6 +301,8 @@ function openModal(title, bodyHtml, onSubmit, submitLabel = "Salvar") {
 
 function closeModal() {
   $("#modal").classList.add("hidden");
+  $("#modalCancel").hidden = false;
+  $("#modalSubmit").textContent = "Salvar";
   modalSubmitHandler = null;
   modalInitialSnapshot = null;
 }
@@ -293,6 +373,60 @@ function confirmDialog(
   (focus === "ok" ? ok : cancel).focus();
 }
 
+function openDetailModal(title, bodyHtml) {
+  $("#modalTitle").textContent = title;
+  $("#modalBody").innerHTML = bodyHtml;
+  $("#modalSubmit").textContent = "Fechar";
+  $("#modalCancel").hidden = true;
+  $("#modalError").classList.add("hidden");
+  modalSubmitHandler = async () => ({ ok: true });
+  $("#modal").classList.remove("hidden");
+  markModalPristine();
+  $("#modalSubmit").focus();
+}
+
+function enhanceRequiredLabels(root = document) {
+  root.querySelectorAll("input[required], select[required], textarea[required]").forEach((field) => {
+    const id = field.id;
+    let label = id ? root.querySelector(`label[for="${CSS.escape(id)}"]`) : null;
+    if (!label) {
+      const wrapper = field.closest(".field, .date-field, .rental-item-row, .return-item");
+      label = wrapper?.querySelector("label");
+    }
+    if (!label) return;
+    label.classList.add("required-label");
+    label.textContent = label.textContent.replace(/\s*\*+\s*$/, "").trim();
+  });
+}
+
+function detailButton(detail, label = "Ver detalhes") {
+  return `<button type="button" class="btn btn-sm btn-ghost btn-detail" data-detail="${escapeHtml(detail)}">${escapeHtml(label)}</button>`;
+}
+
+function detailTable(headers, rows, emptyText = "Nenhum dado para detalhar.") {
+  if (!rows.length) return `<p class="opp-empty detail-empty">${escapeHtml(emptyText)}</p>`;
+  return `<div class="table-wrap detail-table-wrap">
+    <table class="detail-table">
+      <thead><tr>${headers.map((h) => `<th>${escapeHtml(h)}</th>`).join("")}</tr></thead>
+      <tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody>
+    </table>
+  </div>`;
+}
+
+function currentDashboardResult() {
+  if (!window.Analytics) return null;
+  readDashFilters();
+  return window.Analytics.compute(
+    {
+      materials: data.materials,
+      agencies: data.agencies,
+      rentals: data.rentalEntries || [],
+      today: data.today,
+    },
+    dashFilters
+  );
+}
+
 // Le os campos nomeados do formulario do modal.
 function formValues() {
   const out = {};
@@ -323,6 +457,7 @@ function renderAll() {
   renderAgencies();
   renderRentals();
   renderCalendar();
+  renderSortIndicators();
 }
 
 // ----------------------------- Painel (analitico) -----------------------------
@@ -466,8 +601,9 @@ function deltaChip(d, { suffix = "", inverse = false } = {}) {
   return `<span class="${cls}">${arrow} ${label}</span><span class="kpi-sub">vs anterior</span>`;
 }
 
-function kpiCard({ label, value, delta, suffix = "", inverse = false, spark, sub }) {
-  return `<div class="kpi">
+function kpiCard({ label, value, delta, suffix = "", inverse = false, spark, sub, detail }) {
+  const detailAttrs = detail ? ` role="button" tabindex="0" data-detail="${escapeHtml(detail)}" title="Ver detalhes"` : "";
+  return `<div class="kpi${detail ? " kpi-clickable" : ""}"${detailAttrs}>
     <span class="kpi-label">${escapeHtml(label)}</span>
     <span class="kpi-value">${value}</span>
     <div class="kpi-foot">${sub ? `<span class="kpi-sub">${escapeHtml(sub)}</span>` : deltaChip(delta, { suffix, inverse })}</div>
@@ -485,18 +621,21 @@ function renderKpis(result) {
       value: fmtInt(k.rentals.value),
       delta: k.rentals,
       spark: sparkline(k.sparks.rentals, "#41a812"),
+      detail: "dash-kpi-rentals",
     }),
     kpiCard({
       label: "Unidades em uso",
       value: fmtInt(k.unitsOut.value),
       delta: k.unitsOut,
       spark: sparkline(k.sparks.unitsOut, "#0ea5e9"),
+      detail: "dash-kpi-units",
     }),
     kpiCard({
       label: "Agencias ativas",
       value: fmtInt(k.activeAgencies.value),
       delta: k.activeAgencies,
       spark: sparkline(k.sparks.activeAgencies, "#8b5cf6"),
+      detail: "dash-kpi-agencies",
     }),
     kpiCard({
       label: "Taxa de atraso",
@@ -504,6 +643,7 @@ function renderKpis(result) {
       delta: k.overdueRate,
       inverse: true,
       spark: sparkline(k.sparks.overdue, "#f59e0b"),
+      detail: "dash-kpi-overdue",
     }),
     kpiCard({
       label: "Duracao media",
@@ -511,6 +651,7 @@ function renderKpis(result) {
       delta: k.avgDuration,
       suffix: " d",
       inverse: true,
+      detail: "dash-kpi-duration",
     }),
   ].join("");
 }
@@ -789,6 +930,272 @@ function renderActiveRentals(result) {
     .join("");
 }
 
+// ----------------------------- Detalhes de dashboards -----------------------------
+
+function detailIntro(text) {
+  return `<p class="muted detail-intro">${escapeHtml(text)}</p>`;
+}
+
+function dashboardRentalsRows(result) {
+  const rows = data.rentalEntries || [];
+  const from = result.period?.from || "";
+  const to = result.period?.to || "";
+  return rows.filter((r) => {
+    if (dashFilters.agencyId && r.agency_id !== dashFilters.agencyId) return false;
+    if (dashFilters.materialId && r.material_id !== dashFilters.materialId) return false;
+    if (dashFilters.status === "overdue" && !r.overdue) return false;
+    else if (dashFilters.status && dashFilters.status !== "overdue" && r.status !== dashFilters.status) return false;
+    if (from && (!r.checkout_date || r.checkout_date < from)) return false;
+    if (to && (!r.checkout_date || r.checkout_date > to)) return false;
+    return true;
+  });
+}
+
+function openDashboardDetail(kind) {
+  const result = currentDashboardResult();
+  if (!result) return toast("Nao foi possivel montar os detalhes do painel.", "error");
+  const t = result.trends || {};
+  const periodText = `${fmtDate(result.period?.from)} - ${fmtDate(result.period?.to)}`;
+  const rentalRows = dashboardRentalsRows(result);
+  const rentalDetailRows = rentalRows.map((r) => [
+    escapeHtml(fmtDate(r.checkout_date)),
+    escapeHtml(r.event_name || "-"),
+    escapeHtml(agencyLabel(r)),
+    escapeHtml(r.material_name || "-"),
+    escapeHtml(r.quantity || 0),
+    r.overdue ? '<span class="badge badge-overdue">Atrasado</span>' : escapeHtml(r.status || "-"),
+  ]);
+
+  const handlers = {
+    "dash-kpi-rentals": () => ({
+      title: "Alugueis no periodo",
+      body: detailIntro(`Registros considerados no periodo ${periodText}.`) +
+        detailTable(["Retirada", "Evento", "Agencia", "Material", "Qtd", "Situacao"], rentalDetailRows),
+    }),
+    "dash-kpi-units": () => ({
+      title: "Unidades em uso",
+      body: detailIntro(`Itens alugados considerados no periodo ${periodText}.`) +
+        detailTable(["Retirada", "Evento", "Agencia", "Material", "Qtd", "Situacao"], rentalDetailRows),
+    }),
+    "dash-kpi-agencies": () => ({
+      title: "Agencias ativas",
+      body: detailIntro(`Agencias com reservas no periodo ${periodText}.`) +
+        detailTable(
+          ["Codigo", "Agencia", "Reservas", "Qtd. total"],
+          (result.topAgencies || []).map((g) => [
+            escapeHtml(g.code || "-"),
+            escapeHtml(g.name),
+            escapeHtml(fmtInt(g.bookings)),
+            escapeHtml(fmtInt(g.quantity)),
+          ])
+        ),
+    }),
+    "dash-kpi-overdue": () => ({
+      title: "Atrasos no periodo",
+      body: detailIntro(`Itens atrasados dentro dos filtros atuais.`) +
+        detailTable(["Retirada", "Evento", "Agencia", "Material", "Qtd", "Situacao"], rentalDetailRows.filter((row) => String(row[5]).includes("Atrasado"))),
+    }),
+    "dash-kpi-duration": () => ({
+      title: "Duracao media",
+      body: detailIntro("Alugueis devolvidos usados para calcular a duracao media.") +
+        detailTable(["Retirada", "Evento", "Agencia", "Material", "Qtd", "Situacao"], rentalDetailRows.filter((row) => String(row[5]).includes("devolvido"))),
+    }),
+    "dash-trend-rentals": () => ({
+      title: "Alugueis ao longo do tempo",
+      body: detailIntro(`Serie exibida no grafico para ${periodText}.`) +
+        detailTable(
+          ["Periodo", "Alugueis", "Periodo anterior"],
+          (t.labels || []).map((label, i) => [
+            escapeHtml(label),
+            escapeHtml(fmtInt(t.rentals?.[i] || 0)),
+            escapeHtml(t.prevRentals ? fmtInt(t.prevRentals[i] || 0) : "-"),
+          ])
+        ),
+    }),
+    "dash-trend-units": () => ({
+      title: "Unidades em uso e atrasos",
+      body: detailIntro(`Serie exibida no grafico para ${periodText}.`) +
+        detailTable(
+          ["Periodo", "Unidades em uso", "Taxa de atraso"],
+          (t.labels || []).map((label, i) => [
+            escapeHtml(label),
+            escapeHtml(fmtInt(t.unitsOut?.[i] || 0)),
+            escapeHtml(`${t.overdueRate?.[i] || 0}%`),
+          ])
+        ),
+    }),
+    "dash-engagement": () => ({
+      title: "Engajamento das agencias",
+      body: detailIntro("Distribuicao das agencias por recencia de uso.") +
+        detailTable(
+          ["Faixa", "Agencias", "% da base"],
+          (result.engagement?.items || []).map((i) => [
+            escapeHtml(i.label),
+            escapeHtml(fmtInt(i.value)),
+            escapeHtml(`${i.pct}%`),
+          ])
+        ),
+    }),
+    "dash-seasonality": () => {
+      const s = result.seasonality || {};
+      const rows = [];
+      (s.weekdays || []).forEach((wd, wi) => {
+        (s.months || []).forEach((month, mi) => {
+          const value = s.grid?.[wi]?.[mi] || 0;
+          if (value) rows.push([escapeHtml(wd), escapeHtml(month), escapeHtml(fmtInt(value))]);
+        });
+      });
+      return {
+        title: "Sazonalidade das reservas",
+        body: detailIntro("Celulas com reservas no mapa dia x mes.") + detailTable(["Dia", "Mes", "Reservas"], rows),
+      };
+    },
+    "dash-top-agencies": () => ({
+      title: "Agencias com mais reservas",
+      body: detailIntro(`Ranking completo no periodo ${periodText}.`) +
+        detailTable(
+          ["Codigo", "Agencia", "Reservas", "Qtd. total"],
+          (result.topAgencies || []).map((g) => [
+            escapeHtml(g.code || "-"),
+            escapeHtml(g.name),
+            escapeHtml(fmtInt(g.bookings)),
+            escapeHtml(fmtInt(g.quantity)),
+          ])
+        ),
+    }),
+    "dash-active-rentals": () => ({
+      title: "Alugueis ativos",
+      body: detailIntro("Itens atualmente ativos dentro dos filtros do painel.") +
+        detailTable(
+          ["Material", "Agencia", "Qtd", "Retirada", "Prev. devolucao", "Situacao"],
+          (result.ops?.activeRentals || []).map((r) => [
+            escapeHtml(r.material_name),
+            escapeHtml(agencyLabel(r)),
+            escapeHtml(r.quantity),
+            escapeHtml(fmtDate(r.checkout_date)),
+            escapeHtml(fmtDate(r.expected_return_date)),
+            r.overdue ? '<span class="badge badge-overdue">Atrasado</span>' : '<span class="badge badge-rented">No prazo</span>',
+          ])
+        ),
+    }),
+    "dash-materials": () => ({
+      title: "Demanda e utilizacao de materiais",
+      body: detailIntro(`Ranking de materiais no periodo ${periodText}.`) +
+        detailTable(
+          ["Material", "Reservas", "Unidades", "Utilizacao"],
+          (result.materials?.ranking || []).map((m) => [
+            escapeHtml(m.name),
+            escapeHtml(fmtInt(m.bookings)),
+            escapeHtml(fmtInt(m.units)),
+            escapeHtml(`${m.utilizationPct}%`),
+          ])
+        ),
+    }),
+  };
+  const detail = handlers[kind]?.();
+  if (detail) openDetailModal(detail.title, detail.body);
+}
+
+function stockDashboardProducts() {
+  return filteredStockProducts({
+    searchId: "#stockDashSearch",
+    categoryId: "#stockDashCategoryFilter",
+    supplierId: "#stockDashSupplierFilter",
+  });
+}
+
+function stockProductDetailRows(products) {
+  return products.map((p) => [
+    `<span class="mono">${escapeHtml(p.id)}</span>`,
+    escapeHtml(p.name),
+    escapeHtml(p.category || "-"),
+    escapeHtml(p.supplier || "-"),
+    escapeHtml(fmtInt(p.current_stock)),
+    escapeHtml(fmtInt(p.min_stock)),
+    escapeHtml(fmtInt(purchaseNeeded(p))),
+    escapeHtml(fmtMoney(p.stock_value)),
+    stockStatusBadge(p),
+  ]);
+}
+
+function openStockDashboardDetail(kind) {
+  const products = stockDashboardProducts();
+  const statusLabels = {
+    ok: "Dentro da faixa",
+    low: "Abaixo do minimo",
+    empty: "Sem estoque",
+    excess: "Excedente",
+  };
+  const productHeaders = ["Codigo", "Produto", "Categoria", "Fornecedor", "Atual", "Min.", "Comprar", "Valor", "Situacao"];
+  if (kind === "stock-products-filtered") {
+    return openDetailModal(
+      "Produtos filtrados",
+      detailIntro("Produtos considerados nos indicadores atuais do dashboard de estoque.") +
+        detailTable(productHeaders, stockProductDetailRows(products))
+    );
+  }
+  if (kind === "stock-purchase") {
+    const rows = products.filter((p) => purchaseNeeded(p) > 0).sort((a, b) => purchaseNeeded(b) - purchaseNeeded(a));
+    return openDetailModal(
+      "Comprar para atingir o estoque minimo",
+      detailIntro("Produtos abaixo do estoque minimo, com quantidade sugerida de compra.") +
+        detailTable(productHeaders, stockProductDetailRows(rows))
+    );
+  }
+  if (kind === "stock-excess") {
+    const rows = products.filter((p) => p.status === "excess");
+    return openDetailModal(
+      "Produtos excedentes",
+      detailIntro("Produtos acima do estoque maximo definido.") +
+        detailTable(productHeaders, stockProductDetailRows(rows))
+    );
+  }
+  if (kind === "stock-status") {
+    const counts = products.reduce((acc, p) => {
+      const key = p.status || "sem_status";
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    }, {});
+    return openDetailModal(
+      "Situacao do estoque",
+      detailIntro("Resumo por situacao e lista completa de produtos filtrados.") +
+        detailTable(["Situacao", "Produtos"], Object.entries(counts).map(([k, v]) => [escapeHtml(statusLabels[k] || k), escapeHtml(fmtInt(v))])) +
+        `<h4 class="detail-subtitle">Produtos</h4>` +
+        detailTable(productHeaders, stockProductDetailRows(products))
+    );
+  }
+  if (kind === "stock-category") {
+    const byCategory = new Map();
+    for (const p of products) {
+      const cat = p.category || "Sem categoria";
+      const cur = byCategory.get(cat) || { products: 0, units: 0, value: 0 };
+      cur.products += 1;
+      cur.units += Number(p.current_stock) || 0;
+      cur.value += Number(p.stock_value) || 0;
+      byCategory.set(cat, cur);
+    }
+    const rows = Array.from(byCategory.entries())
+      .sort((a, b) => b[1].units - a[1].units)
+      .map(([cat, info]) => [
+        escapeHtml(cat),
+        escapeHtml(fmtInt(info.products)),
+        escapeHtml(fmtInt(info.units)),
+        escapeHtml(fmtMoney(info.value)),
+      ]);
+    return openDetailModal(
+      "Estoque por categoria",
+      detailIntro("Totais agrupados pelas categorias dos produtos filtrados.") +
+        detailTable(["Categoria", "Produtos", "Unidades", "Valor estimado"], rows)
+    );
+  }
+}
+
+function openDetail(kind) {
+  if (!kind) return;
+  if (kind.startsWith("stock-")) return openStockDashboardDetail(kind);
+  return openDashboardDetail(kind);
+}
+
 // ----------------------------- Filtros / interacoes do painel -----------------------------
 
 function resetDashFilters() {
@@ -826,6 +1233,12 @@ function renderMaterials() {
       m.name.toLowerCase().includes(term) ||
       (m.description || "").toLowerCase().includes(term);
   });
+  sortRows(rows, "materials", (m, key) => {
+    if (key === "available") return m.available;
+    if (key === "rented") return m.rented;
+    if (key === "total_quantity") return m.total_quantity;
+    return m[key] || "";
+  });
 
   const tbody = $("#materials-table tbody");
   if (!rows.length) {
@@ -833,7 +1246,6 @@ function renderMaterials() {
     return;
   }
   tbody.innerHTML = rows
-    .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"))
     .map((m) => {
       const swatchColor = m.color || DEFAULT_MATERIAL_COLOR;
       return `<tr>
@@ -848,6 +1260,7 @@ function renderMaterials() {
       </tr>`;
     })
     .join("");
+  renderSortIndicators();
 }
 
 function materialFormHtml(m = {}) {
@@ -926,6 +1339,67 @@ function stockStatusBadge(p) {
   return `<span class="badge ${cls}">${escapeHtml(p.status_label || "-")}</span>`;
 }
 
+function purchaseNeeded(p) {
+  return Math.max(0, (Number(p.min_stock) || 0) - (Number(p.current_stock) || 0));
+}
+
+function stockFilterOptions(field) {
+  return [...new Set((data.stockProducts || []).map((p) => String(p[field] || "").trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "pt-BR"));
+}
+
+function syncStockSelect(sel, values, placeholder = "Todos") {
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML =
+    `<option value="">${escapeHtml(placeholder)}</option>` +
+    values.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("");
+  sel.value = values.includes(prev) ? prev : "";
+}
+
+function populateStockFilterOptions() {
+  const categories = stockFilterOptions("category");
+  const suppliers = stockFilterOptions("supplier");
+  syncStockSelect($("#stockDashCategoryFilter"), categories, "Todas");
+  syncStockSelect($("#stockProductCategoryFilter"), categories, "Todas");
+  syncStockSelect($("#stockMovementCategoryFilter"), categories, "Todas");
+  syncStockSelect($("#stockDashSupplierFilter"), suppliers, "Todos");
+  syncStockSelect($("#stockProductSupplierFilter"), suppliers, "Todos");
+
+  const products = (data.stockProducts || [])
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"))
+    .map((p) => ({ value: p.id, label: `${p.id} - ${p.name}` }));
+  const productSel = $("#stockMovementProductFilter");
+  if (productSel) {
+    const prev = productSel.value;
+    productSel.innerHTML =
+      '<option value="">Todos</option>' +
+      products.map((p) => `<option value="${escapeHtml(p.value)}">${escapeHtml(p.label)}</option>`).join("");
+    productSel.value = products.some((p) => p.value === prev) ? prev : "";
+  }
+}
+
+function filteredStockProducts({ searchId, categoryId, supplierId, statusId }) {
+  const term = ($(searchId)?.value || "").trim().toLowerCase();
+  const category = $(categoryId)?.value || "";
+  const supplier = $(supplierId)?.value || "";
+  const status = $(statusId)?.value || "";
+  return (data.stockProducts || []).filter((p) => {
+    const needed = purchaseNeeded(p);
+    if (category && p.category !== category) return false;
+    if (supplier && p.supplier !== supplier) return false;
+    if (status === "needs_purchase" && needed <= 0) return false;
+    else if (status && status !== "needs_purchase" && p.status !== status) return false;
+    return !term ||
+      p.id.toLowerCase().includes(term) ||
+      p.name.toLowerCase().includes(term) ||
+      (p.category || "").toLowerCase().includes(term) ||
+      (p.supplier || "").toLowerCase().includes(term) ||
+      (p.notes || "").toLowerCase().includes(term);
+  });
+}
+
 function movementTypeBadge(type) {
   return type === "saida"
     ? '<span class="badge badge-overdue">Saida</span>'
@@ -933,28 +1407,47 @@ function movementTypeBadge(type) {
 }
 
 function renderStock() {
-  renderStockKpis();
-  renderStockCharts();
+  renderStockDashboard();
   renderStockProducts();
   renderStockMovements();
 }
 
+function renderStockDashboard() {
+  populateStockFilterOptions();
+  renderStockKpis();
+  renderStockCharts();
+  renderPurchaseAlerts();
+}
+
 function renderStockKpis() {
-  const s = data.stockStats || {};
+  const products = filteredStockProducts({
+    searchId: "#stockDashSearch",
+    categoryId: "#stockDashCategoryFilter",
+    supplierId: "#stockDashSupplierFilter",
+  });
+  const totalStock = products.reduce((sum, p) => sum + (Number(p.current_stock) || 0), 0);
+  const totalValue = products.reduce((sum, p) => sum + (Number(p.stock_value) || 0), 0);
+  const needsPurchase = products.filter((p) => purchaseNeeded(p) > 0);
+  const purchaseUnits = needsPurchase.reduce((sum, p) => sum + purchaseNeeded(p), 0);
+  const excess = products.filter((p) => p.status === "excess").length;
   const grid = $("#stockKpiGrid");
   if (!grid) return;
   grid.innerHTML = [
-    kpiCard({ label: "Produtos", value: fmtInt(s.totalProducts), sub: "cadastrados" }),
-    kpiCard({ label: "Unidades em estoque", value: fmtInt(s.totalStock), sub: "saldo atual" }),
-    kpiCard({ label: "Valor estimado", value: fmtMoney(s.totalValue), sub: "preco medio de compra" }),
-    kpiCard({ label: "Abaixo do minimo", value: fmtInt(s.lowProducts), sub: "inclui sem estoque" }),
-    kpiCard({ label: "Mov. no mes", value: fmtInt(s.movementsThisMonth), sub: "entradas e saidas" }),
+    kpiCard({ label: "Produtos filtrados", value: fmtInt(products.length), sub: "cadastros visiveis", detail: "stock-products-filtered" }),
+    kpiCard({ label: "Comprar agora", value: fmtInt(needsPurchase.length), sub: `${fmtInt(purchaseUnits)} unidade(s) para minimo`, detail: "stock-purchase" }),
+    kpiCard({ label: "Unidades em estoque", value: fmtInt(totalStock), sub: "saldo atual", detail: "stock-products-filtered" }),
+    kpiCard({ label: "Valor estimado", value: fmtMoney(totalValue), sub: "preco medio de compra", detail: "stock-products-filtered" }),
+    kpiCard({ label: "Excedentes", value: fmtInt(excess), sub: "acima do maximo", detail: "stock-excess" }),
   ].join("");
 }
 
 function renderStockCharts() {
   if (!chartReady()) return;
-  const products = data.stockProducts || [];
+  const products = filteredStockProducts({
+    searchId: "#stockDashSearch",
+    categoryId: "#stockDashCategoryFilter",
+    supplierId: "#stockDashSupplierFilter",
+  });
   const statusLabels = {
     ok: "Dentro da faixa",
     low: "Abaixo do minimo",
@@ -967,7 +1460,11 @@ function renderStockCharts() {
     empty: "#991b1b",
     excess: "#f59e0b",
   };
-  const statusEntries = Object.entries(data.stockStats?.byStatus || {}).filter(([, v]) => v > 0);
+  const byStatus = products.reduce((acc, p) => {
+    acc[p.status] = (acc[p.status] || 0) + 1;
+    return acc;
+  }, {});
+  const statusEntries = Object.entries(byStatus).filter(([, v]) => v > 0);
   if (statusEntries.length) {
     upsertChart("stockStatus", "chartStockStatus", {
       type: "doughnut",
@@ -1001,30 +1498,65 @@ function renderStockCharts() {
   }
 }
 
-function renderStockProducts() {
-  const term = ($("#stockProductSearch")?.value || "").trim().toLowerCase();
-  const rows = (data.stockProducts || []).filter((p) => {
-    return !term ||
-      p.id.toLowerCase().includes(term) ||
-      p.name.toLowerCase().includes(term) ||
-      (p.category || "").toLowerCase().includes(term) ||
-      (p.supplier || "").toLowerCase().includes(term);
-  });
-  const tbody = $("#stock-products-table tbody");
+function renderPurchaseAlerts() {
+  const rows = filteredStockProducts({
+    searchId: "#stockDashSearch",
+    categoryId: "#stockDashCategoryFilter",
+    supplierId: "#stockDashSupplierFilter",
+  })
+    .filter((p) => purchaseNeeded(p) > 0);
+  sortRows(rows, "stockPurchase", stockProductSortValue);
+  const count = $("#purchaseAlertCount");
+  if (count) count.textContent = `${fmtInt(rows.length)} item(ns)`;
+  const tbody = $("#stock-purchase-table tbody");
   if (!tbody) return;
   if (!rows.length) {
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="9">Nenhum produto encontrado.</td></tr>`;
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="7">Nenhum produto abaixo do estoque minimo nos filtros atuais.</td></tr>`;
     return;
   }
   tbody.innerHTML = rows
-    .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"))
+    .map((p) => {
+      const needed = purchaseNeeded(p);
+      return `<tr>
+        <td><span class="mono">${escapeHtml(p.id)}</span> - ${escapeHtml(p.name)}</td>
+        <td>${escapeHtml(p.category) || "-"}</td>
+        <td>${fmtInt(p.current_stock)}</td>
+        <td>${fmtInt(p.min_stock)}</td>
+        <td><strong class="stock-buy">${fmtInt(needed)}</strong></td>
+        <td>${fmtDate(p.last_movement_date)}</td>
+        <td class="col-actions">
+          <button class="btn-link" data-edit-stock-product="${escapeHtml(p.id)}">Editar</button>
+          <button class="btn-link" data-nav-target="stock-movements" data-product-filter="${escapeHtml(p.id)}">Movimentar</button>
+        </td>
+      </tr>`;
+    })
+    .join("");
+  renderSortIndicators();
+}
+
+function renderStockProducts() {
+  populateStockFilterOptions();
+  const sortSelect = $("#stockProductSort");
+  if (sortSelect && Array.from(sortSelect.options).some((opt) => opt.value === tableSort.stockProducts.key)) {
+    sortSelect.value = tableSort.stockProducts.key;
+  }
+  const rows = getFilteredSortedStockProducts();
+  const tbody = $("#stock-products-table tbody");
+  if (!tbody) return;
+  if (!rows.length) {
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="11">Nenhum produto encontrado.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = rows
     .map(
       (p) => `<tr>
         <td class="mono">${escapeHtml(p.id)}</td>
         <td>${escapeHtml(p.name)}</td>
         <td>${escapeHtml(p.category) || "-"}</td>
+        <td>${escapeHtml(p.supplier) || "-"}</td>
         <td>${fmtInt(p.current_stock)}</td>
         <td>${fmtInt(p.min_stock)}</td>
+        <td>${purchaseNeeded(p) ? `<strong class="stock-buy">${fmtInt(purchaseNeeded(p))}</strong>` : "-"}</td>
         <td>${fmtInt(p.max_stock)}</td>
         <td>${fmtMoney(p.stock_value)}</td>
         <td>${stockStatusBadge(p)}</td>
@@ -1035,29 +1567,85 @@ function renderStockProducts() {
       </tr>`
     )
     .join("");
+  renderSortIndicators();
 }
 
-function renderStockMovements() {
+function getFilteredStockMovements() {
+  populateStockFilterOptions();
   const term = ($("#stockMovementSearch")?.value || "").trim().toLowerCase();
+  const productId = $("#stockMovementProductFilter")?.value || "";
+  const category = $("#stockMovementCategoryFilter")?.value || "";
   const type = $("#stockMovementTypeFilter")?.value || "";
-  const rows = (data.stockMovements || []).filter((m) => {
+  const from = $("#stockMovementFrom")?.value || "";
+  const to = $("#stockMovementTo")?.value || "";
+  const productById = new Map((data.stockProducts || []).map((p) => [p.id, p]));
+  return (data.stockMovements || []).filter((m) => {
+    const p = productById.get(m.product_id);
+    if (productId && m.product_id !== productId) return false;
+    if (category && (p?.category || "") !== category) return false;
     if (type && m.type !== type) return false;
+    if (from && (!m.movement_date || m.movement_date < from)) return false;
+    if (to && (!m.movement_date || m.movement_date > to)) return false;
     return !term ||
       (m.product_name || "").toLowerCase().includes(term) ||
       (m.product_id || "").toLowerCase().includes(term) ||
+      (p?.category || "").toLowerCase().includes(term) ||
       (m.notes || "").toLowerCase().includes(term);
   });
+}
+
+function stockProductSortValue(p, key) {
+  if (key === "needed") return purchaseNeeded(p);
+  if (key === "current_stock") return p.current_stock;
+  if (key === "min_stock") return p.min_stock;
+  if (key === "max_stock") return p.max_stock;
+  if (key === "stock_value") return p.stock_value;
+  if (key === "status") return p.status_label;
+  return p[key] || "";
+}
+
+function stockMovementSortValue(m, key) {
+  const productById = new Map((data.stockProducts || []).map((p) => [p.id, p]));
+  const p = productById.get(m.product_id);
+  if (key === "product") return m.product_name;
+  if (key === "category") return p?.category || "";
+  if (key === "quantity") return m.quantity;
+  if (key === "unit_cost") return m.unit_cost;
+  if (key === "total_value") return m.total_value;
+  return m[key] || "";
+}
+
+function getFilteredSortedStockProducts() {
+  const rows = filteredStockProducts({
+    searchId: "#stockProductSearch",
+    categoryId: "#stockProductCategoryFilter",
+    supplierId: "#stockProductSupplierFilter",
+    statusId: "#stockProductStatusFilter",
+  });
+  return sortRows(rows, "stockProducts", stockProductSortValue);
+}
+
+function getFilteredSortedStockMovements() {
+  const rows = getFilteredStockMovements();
+  return sortRows(rows, "stockMovements", stockMovementSortValue);
+}
+
+function renderStockMovements() {
+  const productById = new Map((data.stockProducts || []).map((p) => [p.id, p]));
+  const rows = getFilteredSortedStockMovements();
   const tbody = $("#stock-movements-table tbody");
   if (!tbody) return;
   if (!rows.length) {
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="8">Nenhuma movimentacao encontrada.</td></tr>`;
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="9">Nenhuma movimentacao encontrada.</td></tr>`;
     return;
   }
   tbody.innerHTML = rows
-    .map(
-      (m) => `<tr>
+    .map((m) => {
+      const p = productById.get(m.product_id);
+      return `<tr>
         <td>${fmtDate(m.movement_date)}</td>
         <td><span class="mono">${escapeHtml(m.product_id)}</span> - ${escapeHtml(m.product_name)}</td>
+        <td>${escapeHtml(p?.category || "") || "-"}</td>
         <td>${movementTypeBadge(m.type)}</td>
         <td>${fmtInt(m.quantity)}</td>
         <td>${fmtMoney(m.unit_cost)}</td>
@@ -1067,9 +1655,10 @@ function renderStockMovements() {
           <button class="btn-link" data-edit-stock-movement="${escapeHtml(m.id)}">Editar</button>
           <button class="btn-link danger" data-del-stock-movement="${escapeHtml(m.id)}">Excluir</button>
         </td>
-      </tr>`
-    )
+      </tr>`;
+    })
     .join("");
+  renderSortIndicators();
 }
 
 function stockProductFormHtml(p = {}) {
@@ -1193,6 +1782,62 @@ function openStockMovementForm(movement) {
   markModalPristine();
 }
 
+function applyStockProductSortSelect() {
+  const key = $("#stockProductSort")?.value || "needed";
+  tableSort.stockProducts = {
+    key,
+    dir: ["needed", "current_stock", "min_stock", "max_stock", "stock_value"].includes(key) ? "desc" : "asc",
+  };
+  renderStockProducts();
+}
+
+function exportStockProductsReport() {
+  const rows = getFilteredSortedStockProducts();
+  downloadCsv(
+    `relatorio_produtos_estoque_${data.today || "hoje"}.csv`,
+    ["codigo_produto", "descricao", "categoria", "fornecedor", "estoque_atual", "estoque_minimo", "comprar", "estoque_maximo", "valor_estoque", "situacao", "ultima_movimentacao", "observacoes"],
+    rows.map((p) => [
+      p.id,
+      p.name,
+      p.category,
+      p.supplier,
+      p.current_stock,
+      p.min_stock,
+      purchaseNeeded(p),
+      p.max_stock,
+      csvNumber(p.stock_value),
+      p.status_label,
+      p.last_movement_date,
+      p.notes,
+    ])
+  );
+  toast("Relatorio de produtos baixado.", "success");
+}
+
+function exportStockMovementsReport() {
+  const productById = new Map((data.stockProducts || []).map((p) => [p.id, p]));
+  const rows = getFilteredSortedStockMovements();
+  downloadCsv(
+    `relatorio_entradas_saidas_${data.today || "hoje"}.csv`,
+    ["data_movimentacao", "codigo_produto", "produto", "categoria", "tipo", "quantidade", "valor_unitario", "valor_transacao", "observacoes"],
+    rows.map((m) => {
+      const p = productById.get(m.product_id);
+      return [
+        m.movement_date,
+        m.product_id,
+        m.product_name,
+        p?.category || "",
+        m.type === "saida" ? "Saida" : "Entrada",
+        m.quantity,
+        csvNumber(m.unit_cost),
+        csvNumber(m.total_value),
+        m.notes,
+      ];
+    })
+  );
+  toast("Relatorio de entradas e saidas baixado.", "success");
+}
+
 // ----------------------------- Agencias -----------------------------
 
 function renderAgencies() {
@@ -1205,6 +1850,7 @@ function renderAgencies() {
       (a.email || "").toLowerCase().includes(term) ||
       (a.phone || "").toLowerCase().includes(term);
   });
+  sortRows(rows, "agencies", (a, key) => a[key] || "");
 
   const tbody = $("#agencies-table tbody");
   if (!rows.length) {
@@ -1227,6 +1873,7 @@ function renderAgencies() {
       </tr>`
     )
     .join("");
+  renderSortIndicators();
 }
 
 function agencyFormHtml(a = {}) {
@@ -1308,8 +1955,24 @@ function rentalItemsCell(r) {
     .join("");
 }
 
+function rentalSearchScore(r, term) {
+  if (window.SearchUtils && typeof window.SearchUtils.rentalSearchScore === "function") {
+    return window.SearchUtils.rentalSearchScore(r, term);
+  }
+  const q = String(term || "").trim().toLocaleLowerCase("pt-BR");
+  if (!q) return 0;
+  const fields = [
+    r.process_number,
+    r.event_name,
+    r.agency_name,
+    r.agency_code,
+    ...(r.items || []).map((it) => it.material_name),
+  ].join(" ").toLocaleLowerCase("pt-BR");
+  return fields.includes(q) ? 1 : -1;
+}
+
 function renderRentals() {
-  const term = $("#rentalSearch").value.trim().toLowerCase();
+  const term = $("#rentalSearch").value.trim();
   const agencyId = $("#rentalAgencyFilter").value;
   const agencyCode = $("#rentalAgencyCodeFilter").value.trim().toLowerCase();
   const materialId = $("#rentalMaterialFilter").value;
@@ -1335,14 +1998,10 @@ function renderRentals() {
       .map((m) => ({ value: m.id, label: m.name }))
   );
 
-  const rows = data.rentals.filter((r) => {
+  const rows = data.rentals.map((r) => ({ rental: r, searchScore: rentalSearchScore(r, term) })).filter((entry) => {
+    const r = entry.rental;
     const items = r.items || [];
-    const matchTerm = !term ||
-      items.some((it) => it.material_name.toLowerCase().includes(term)) ||
-      r.agency_name.toLowerCase().includes(term) ||
-      String(r.event_name || "").toLowerCase().includes(term) ||
-      String(r.agency_code || "").toLowerCase().includes(term);
-    if (!matchTerm) return false;
+    if (term && entry.searchScore < 0) return false;
 
     if (agencyId && r.agency_id !== agencyId) return false;
     if (agencyCode && !String(r.agency_code || "").toLowerCase().includes(agencyCode)) return false;
@@ -1361,15 +2020,21 @@ function renderRentals() {
     if (returnTo && (!r.expected_return_date || r.expected_return_date > returnTo)) return false;
 
     return true;
+  }).map((entry) => entry.rental);
+  sortRows(rows, "rentals", (r, key) => {
+    if (key === "materials") return (r.items || []).map((it) => it.material_name).join(", ");
+    if (key === "total_quantity") return r.total_quantity;
+    if (key === "status") return r.overdue ? "atrasado" : r.status;
+    if (key === "agency") return r.agency_name;
+    return r[key] || "";
   });
 
   const tbody = $("#rentals-table tbody");
   if (!rows.length) {
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="9">Nenhum aluguel encontrado.</td></tr>`;
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="10">Nenhum aluguel encontrado.</td></tr>`;
     return;
   }
   tbody.innerHTML = rows
-    .sort((a, b) => (b.checkout_date || "").localeCompare(a.checkout_date || ""))
     .map((r) => {
       const hasActive = (r.items || []).some((it) => it.status === "alugado");
       const actions = hasActive
@@ -1389,6 +2054,7 @@ function renderRentals() {
         <td>${escapeHtml(r.agency_code) || "-"}</td>
         <td>${escapeHtml(r.agency_name)}</td>
         <td>${escapeHtml(r.event_name) || "-"}</td>
+        <td>${escapeHtml(r.process_number) || "-"}</td>
         <td class="rental-items-cell">${rentalItemsCell(r)}</td>
         <td>${fmtDate(r.checkout_date)}</td>
         <td>${fmtDate(r.expected_return_date)}</td>
@@ -1398,6 +2064,7 @@ function renderRentals() {
       </tr>`;
     })
     .join("");
+  renderSortIndicators();
 }
 
 function clearRentalFilters() {
@@ -1484,6 +2151,10 @@ function rentalFormHtml(r = {}) {
       <div class="field">
         <label for="rentalEvent">Nome do evento</label>
         <input name="event_name" id="rentalEvent" value="${escapeHtml(r.event_name)}" placeholder="Ex.: Feira do Agronegocio" maxlength="120" />
+      </div>
+      <div class="field">
+        <label for="rentalProcess">Numero do processo (FLUID)</label>
+        <input name="process_number" id="rentalProcess" value="${escapeHtml(r.process_number)}" placeholder="Ex.: FLUID-12345" maxlength="80" />
       </div>
       <div class="field full">
         <label>Materiais do aluguel *</label>
@@ -1576,6 +2247,7 @@ function openRentalForm(rental) {
       const payload = {
         agency_id: v.agency_id,
         event_name: v.event_name,
+        process_number: v.process_number,
         checkout_date: v.checkout_date,
         expected_return_date: v.expected_return_date,
         notes: v.notes,
@@ -2261,6 +2933,33 @@ async function downloadStockTemplate(kind) {
   toast("Template CSV salvo.", "success");
 }
 
+function clearStockDashboardFilters() {
+  $("#stockDashSearch").value = "";
+  $("#stockDashCategoryFilter").value = "";
+  $("#stockDashSupplierFilter").value = "";
+  renderStockDashboard();
+}
+
+function clearStockProductFilters() {
+  $("#stockProductSearch").value = "";
+  $("#stockProductCategoryFilter").value = "";
+  $("#stockProductSupplierFilter").value = "";
+  $("#stockProductStatusFilter").value = "";
+  $("#stockProductSort").value = "needed";
+  tableSort.stockProducts = { key: "needed", dir: "desc" };
+  renderStockProducts();
+}
+
+function clearStockMovementFilters() {
+  $("#stockMovementSearch").value = "";
+  $("#stockMovementProductFilter").value = "";
+  $("#stockMovementCategoryFilter").value = "";
+  $("#stockMovementTypeFilter").value = "";
+  setBRDateField("stockMovementFrom", "");
+  setBRDateField("stockMovementTo", "");
+  renderStockMovements();
+}
+
 // ----------------------------- Navegacao -----------------------------
 
 function switchView(view) {
@@ -2270,7 +2969,9 @@ function switchView(view) {
   $$(".view").forEach((v) => v.classList.toggle("active", v.id === `view-${view}`));
   if (view === "settings") loadSettings();
   if (view === "calendar") renderCalendar();
-  if (view === "stock") renderStock();
+  if (view === "stock-dashboard") renderStockDashboard();
+  if (view === "stock-products") renderStockProducts();
+  if (view === "stock-movements") renderStockMovements();
 }
 
 // ----------------------------- Eventos -----------------------------
@@ -2296,6 +2997,13 @@ function bindEvents() {
   $("#insightsGrid")?.addEventListener("click", (e) => {
     const btn = e.target.closest?.("[data-insight]");
     if (btn) handleInsightAction(btn.getAttribute("data-insight"));
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const detail = e.target instanceof HTMLElement ? e.target.closest("[data-detail]") : null;
+    if (!detail) return;
+    e.preventDefault();
+    openDetail(detail.getAttribute("data-detail"));
   });
 
   // Modal
@@ -2342,9 +3050,24 @@ function bindEvents() {
 
   // Busca / filtros
   $("#materialSearch").addEventListener("input", renderMaterials);
+  ["#stockDashSearch"].forEach((sel) => $(sel).addEventListener("input", renderStockDashboard));
+  ["#stockDashCategoryFilter", "#stockDashSupplierFilter"].forEach((sel) => $(sel).addEventListener("change", renderStockDashboard));
+  $("#stockDashClearFilters").addEventListener("click", clearStockDashboardFilters);
   $("#stockProductSearch").addEventListener("input", renderStockProducts);
-  $("#stockMovementSearch").addEventListener("input", renderStockMovements);
-  $("#stockMovementTypeFilter").addEventListener("change", renderStockMovements);
+  [
+    "#stockProductCategoryFilter",
+    "#stockProductSupplierFilter",
+    "#stockProductStatusFilter",
+  ].forEach((sel) => $(sel).addEventListener("change", renderStockProducts));
+  $("#stockProductSort").addEventListener("change", applyStockProductSortSelect);
+  $("#stockProductClearFilters").addEventListener("click", clearStockProductFilters);
+  $("#downloadStockProductsReportBtn").addEventListener("click", exportStockProductsReport);
+  ["#stockMovementSearch", "#stockMovementFrom", "#stockMovementTo"].forEach((sel) => $(sel).addEventListener("input", renderStockMovements));
+  ["#stockMovementProductFilter", "#stockMovementCategoryFilter", "#stockMovementTypeFilter"].forEach((sel) =>
+    $(sel).addEventListener("change", renderStockMovements)
+  );
+  $("#stockMovementClearFilters").addEventListener("click", clearStockMovementFilters);
+  $("#downloadStockMovementsReportBtn").addEventListener("click", exportStockMovementsReport);
   $("#agencySearch").addEventListener("input", renderAgencies);
   [
     "#rentalSearch",
@@ -2402,6 +3125,39 @@ function bindEvents() {
   document.addEventListener("click", (e) => {
     const t = e.target;
     if (!(t instanceof HTMLElement)) return;
+
+    const detail = t.closest("[data-detail]");
+    if (detail) {
+      openDetail(detail.getAttribute("data-detail"));
+      return;
+    }
+
+    const sortHeader = t.closest("th[data-sort-table][data-sort-key]");
+    if (sortHeader) {
+      setTableSort(sortHeader.dataset.sortTable, sortHeader.dataset.sortKey, sortHeader.dataset.sortDefault || "asc");
+      const renderByTable = {
+        materials: renderMaterials,
+        agencies: renderAgencies,
+        rentals: renderRentals,
+        stockPurchase: renderPurchaseAlerts,
+        stockProducts: renderStockProducts,
+        stockMovements: renderStockMovements,
+      };
+      renderByTable[sortHeader.dataset.sortTable]?.();
+      renderSortIndicators();
+      return;
+    }
+
+    const navTarget = t.getAttribute("data-nav-target");
+    if (navTarget) {
+      const productFilter = t.getAttribute("data-product-filter");
+      switchView(navTarget);
+      if (navTarget === "stock-movements" && productFilter) {
+        $("#stockMovementProductFilter").value = productFilter;
+        renderStockMovements();
+      }
+      return;
+    }
 
     const editMat = t.getAttribute("data-edit-material");
     if (editMat) return openMaterialForm(data.materials.find((m) => m.id === editMat));
