@@ -348,6 +348,10 @@ function cleanColor(value) {
   return /^#[0-9a-fA-F]{6}$/.test(v) ? v.toLowerCase() : "";
 }
 
+function addErrorIf(errors, condition, message) {
+  if (condition) errors.push(message);
+}
+
 function validateMaterial(data) {
   const errors = [];
   const name = String(data.name || "").trim();
@@ -373,11 +377,11 @@ function validateStockProduct(data, { requireId = true } = {}) {
   const name = String(data.name || "").trim();
   const min = parseIntStrict(data.min_stock);
   const max = parseIntStrict(data.max_stock);
-  if (requireId && !id) errors.push("Codigo do produto e obrigatorio.");
-  if (id && !/^[A-Za-z0-9._-]+$/.test(id)) errors.push("Codigo do produto deve usar letras, numeros, ponto, hifen ou underline.");
-  if (!name) errors.push("Descricao e obrigatoria.");
-  if (min === null || min < 0) errors.push("Estoque minimo deve ser um numero inteiro >= 0.");
-  if (max === null || max < 0) errors.push("Estoque maximo deve ser um numero inteiro >= 0.");
+  addErrorIf(errors, requireId && !id, "Codigo do produto e obrigatorio.");
+  addErrorIf(errors, id && !/^[A-Za-z0-9._-]+$/.test(id), "Codigo do produto deve usar letras, numeros, ponto, hifen ou underline.");
+  addErrorIf(errors, !name, "Descricao e obrigatoria.");
+  addErrorIf(errors, min === null || min < 0, "Estoque minimo deve ser um numero inteiro >= 0.");
+  addErrorIf(errors, max === null || max < 0, "Estoque maximo deve ser um numero inteiro >= 0.");
   return { errors, clean: { id, name, min, max } };
 }
 
@@ -390,12 +394,12 @@ function validateStockMovement(data) {
   const unitCost = stock.parseNumber(data.unit_cost);
   let totalValue = stock.parseNumber(data.total_value);
 
-  if (!productId) errors.push("Produto e obrigatorio.");
-  if (!type) errors.push("Tipo deve ser Entrada ou Saida.");
-  if (!isValidDate(movementDate)) errors.push("Data da movimentacao invalida.");
-  if (quantity === null || quantity <= 0) errors.push("Quantidade deve ser um numero inteiro maior que zero.");
-  if (unitCost < 0) errors.push("Valor unitario deve ser >= 0.");
-  if (totalValue < 0) errors.push("Valor da transacao deve ser >= 0.");
+  addErrorIf(errors, !productId, "Produto e obrigatorio.");
+  addErrorIf(errors, !type, "Tipo deve ser Entrada ou Saida.");
+  addErrorIf(errors, !isValidDate(movementDate), "Data da movimentacao invalida.");
+  addErrorIf(errors, quantity === null || quantity <= 0, "Quantidade deve ser um numero inteiro maior que zero.");
+  addErrorIf(errors, unitCost < 0, "Valor unitario deve ser >= 0.");
+  addErrorIf(errors, totalValue < 0, "Valor da transacao deve ser >= 0.");
   if (!totalValue && unitCost > 0 && quantity > 0) totalValue = unitCost * quantity;
 
   return { errors, clean: { productId, type, movementDate, quantity, unitCost, totalValue } };
@@ -425,6 +429,78 @@ function normalizeFilesPayload(list) {
   return list
     .map((f) => ({ path: String(f?.path || ""), name: String(f?.name || "") }))
     .filter((f) => f.path);
+}
+
+function firstInvalidAttachment(files) {
+  for (const f of files) {
+    const check = attachments.validateSource(f.path, f.name);
+    if (!check.ok) return check;
+  }
+  return null;
+}
+
+function reconcileRentalItems(existingItems, cleanItems, rentalId, stamp) {
+  const existingById = new Map(existingItems.map((it) => [it.id, it]));
+  const keptIds = new Set();
+  const nextItems = cleanItems.map((it) => reconcileRentalItem(existingById, keptIds, it, rentalId, stamp));
+  const returnedMissing = existingItems.filter((it) => it.status === STATUS.RETURNED && !keptIds.has(it.id));
+  return [...nextItems, ...returnedMissing];
+}
+
+function reconcileRentalItem(existingById, keptIds, item, rentalId, stamp) {
+  const existing = item.id ? existingById.get(item.id) : null;
+  if (!existing) return newRentalItem(item, rentalId, stamp);
+
+  keptIds.add(existing.id);
+  if (existing.status === STATUS.RETURNED) return existing;
+
+  const changed = existing.material_id !== item.material_id || Number(existing.quantity) !== item.quantity;
+  return {
+    ...existing,
+    material_id: item.material_id,
+    quantity: item.quantity,
+    alterado_em: changed ? stamp : existing.alterado_em,
+  };
+}
+
+function newRentalItem(item, rentalId, stamp) {
+  return {
+    id: store.newId(),
+    rental_id: rentalId,
+    material_id: item.material_id,
+    quantity: item.quantity,
+    status: STATUS.RENTED,
+    actual_return_date: "",
+    adicionado_em: stamp,
+    alterado_em: "",
+  };
+}
+
+function rentalAvailabilityIssues(state, rentalId, nextItems, clean) {
+  const activeToValidate = nextItems
+    .filter((it) => it.status === STATUS.RENTED)
+    .map((it) => ({ material_id: it.material_id, quantity: Number(it.quantity) }));
+  const occupancy = availability.occupancyFromItems(state.rentals, state.items, rentalId);
+  return rentalRules.checkItemsAvailability(
+    activeToValidate,
+    state.materials,
+    occupancy,
+    clean.checkout_date,
+    clean.expected_return_date
+  );
+}
+
+function updatedRental(current, clean, stamp) {
+  return {
+    ...current,
+    agency_id: clean.agency_id,
+    event_name: clean.event_name,
+    process_number: clean.process_number,
+    checkout_date: clean.checkout_date,
+    expected_return_date: clean.expected_return_date,
+    notes: clean.notes,
+    alterado_em: stamp,
+  };
 }
 
 // ----------------------------- Handlers -------------------------------------
@@ -1049,48 +1125,10 @@ function registerIpc() {
         return null;
       }
 
-      const existingItems = state.items.filter((it) => it.rental_id === data.id);
-      const existingById = new Map(existingItems.map((it) => [it.id, it]));
       const stamp = nowStamp();
 
-      // Reconciliacao dos itens enviados com os existentes.
-      const nextItems = [];
-      const keptIds = new Set();
-      for (const it of clean.items) {
-        const existing = it.id ? existingById.get(it.id) : null;
-        if (existing) {
-          keptIds.add(existing.id);
-          if (existing.status === STATUS.RETURNED) {
-            // Item devolvido: preservado como esta (historico imutavel aqui).
-            nextItems.push(existing);
-          } else {
-            const changed =
-              existing.material_id !== it.material_id ||
-              Number(existing.quantity) !== it.quantity;
-            nextItems.push({
-              ...existing,
-              material_id: it.material_id,
-              quantity: it.quantity,
-              alterado_em: changed ? stamp : existing.alterado_em,
-            });
-          }
-        } else {
-          nextItems.push({
-            id: store.newId(),
-            rental_id: data.id,
-            material_id: it.material_id,
-            quantity: it.quantity,
-            status: STATUS.RENTED,
-            actual_return_date: "",
-            adicionado_em: stamp,
-            alterado_em: "",
-          });
-        }
-      }
-      // Itens devolvidos ausentes do payload tambem sao preservados.
-      for (const ex of existingItems) {
-        if (ex.status === STATUS.RETURNED && !keptIds.has(ex.id)) nextItems.push(ex);
-      }
+      const existingItems = state.items.filter((it) => it.rental_id === data.id);
+      const nextItems = reconcileRentalItems(existingItems, clean.items, data.id, stamp);
       if (!nextItems.length) {
         problem = fail("VALIDATION", "O aluguel precisa ter pelo menos um material.");
         return null;
@@ -1098,33 +1136,14 @@ function registerIpc() {
 
       // Disponibilidade dos itens que ficarao ATIVOS, com dados frescos e
       // desconsiderando os proprios itens deste aluguel.
-      const activeToValidate = nextItems
-        .filter((it) => it.status === STATUS.RENTED)
-        .map((it) => ({ material_id: it.material_id, quantity: Number(it.quantity) }));
-      const occupancy = availability.occupancyFromItems(state.rentals, state.items, data.id);
-      const issues = rentalRules.checkItemsAvailability(
-        activeToValidate,
-        state.materials,
-        occupancy,
-        clean.checkout_date,
-        clean.expected_return_date
-      );
+      const issues = rentalAvailabilityIssues(state, data.id, nextItems, clean);
       if (issues.length) {
         problem = fail("VALIDATION", rentalRules.availabilityMessage(issues));
         return null;
       }
 
       const nextRentals = [...state.rentals];
-      nextRentals[idx] = {
-        ...current,
-        agency_id: clean.agency_id,
-        event_name: clean.event_name,
-        process_number: clean.process_number,
-        checkout_date: clean.checkout_date,
-        expected_return_date: clean.expected_return_date,
-        notes: clean.notes,
-        alterado_em: stamp,
-      };
+      nextRentals[idx] = updatedRental(current, clean, stamp);
 
       return {
         rentals: nextRentals,
@@ -1234,10 +1253,8 @@ function registerIpc() {
     const files = normalizeFilesPayload(payload?.files);
     if (!rentalId || !files.length) return fail("VALIDATION", "Nenhum arquivo selecionado.");
 
-    for (const f of files) {
-      const check = attachments.validateSource(f.path, f.name);
-      if (!check.ok) return fail("VALIDATION", check.message);
-    }
+    const invalid = firstInvalidAttachment(files);
+    if (invalid) return fail("VALIDATION", invalid.message);
 
     let problem = null;
     let addedRows = [];

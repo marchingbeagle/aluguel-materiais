@@ -11,6 +11,11 @@ export default [
   },
   js.configs.recommended,
   {
+    rules: {
+      complexity: ["error", 10],
+    },
+  },
+  {
     files: [
       "src/main/**/*.js",
       "src/preload/**/*.js",

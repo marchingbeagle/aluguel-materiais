@@ -237,14 +237,16 @@ function setSync(state) {
 }
 
 // Trata o resultado padrao { ok, code, message } dos handlers de escrita.
+async function handleFailedResult(res) {
+  toast(res.message || "Operacao nao concluida.", res.code === "CONFLICT" ? "warn" : "error");
+  if (res.code === "CONFLICT" || res.code === "NOT_FOUND") await loadAll();
+  return res;
+}
+
 async function handleResult(promise, successMsg) {
   try {
     const res = await promise;
-    if (res && res.ok === false) {
-      toast(res.message || "Operacao nao concluida.", res.code === "CONFLICT" ? "warn" : "error");
-      if (res.code === "CONFLICT" || res.code === "NOT_FOUND") await loadAll();
-      return res;
-    }
+    if (res && res.ok === false) return await handleFailedResult(res);
     if (successMsg) toast(successMsg, "success");
     await loadAll();
     return res || { ok: true };
@@ -493,12 +495,16 @@ function upsertChart(key, canvasId, config) {
 }
 
 function readDashFilters() {
-  dashFilters.preset = $("#fltPreset")?.value || "last30";
-  dashFilters.from = $("#fltFrom")?.value || "";
-  dashFilters.to = $("#fltTo")?.value || "";
-  dashFilters.agencyId = $("#fltAgency")?.value || "";
-  dashFilters.materialId = $("#fltMaterial")?.value || "";
-  dashFilters.status = $("#fltStatus")?.value || "";
+  const valueOf = (selector, fallback = "") => {
+    const el = $(selector);
+    return el ? el.value || fallback : fallback;
+  };
+  dashFilters.preset = valueOf("#fltPreset", "last30");
+  dashFilters.from = valueOf("#fltFrom");
+  dashFilters.to = valueOf("#fltTo");
+  dashFilters.agencyId = valueOf("#fltAgency");
+  dashFilters.materialId = valueOf("#fltMaterial");
+  dashFilters.status = valueOf("#fltStatus");
 }
 
 // Popula os selects de agencia/material mantendo a selecao atual.
@@ -587,15 +593,25 @@ function sparkline(values, color) {
   </svg>`;
 }
 
-function deltaChip(d, { suffix = "", inverse = false } = {}) {
+function deltaLabel(d, suffix) {
+  if (d.pct === null) {
+    const prefix = d.abs >= 0 ? "+" : "";
+    return `${prefix}${fmtInt(Math.round(d.abs))}${suffix}`;
+  }
+  const prefix = d.pct >= 0 ? "+" : "";
+  return `${prefix}${Math.round(d.pct)}%`;
+}
+
+function deltaChip(d, opts = {}) {
   if (!d || d.prev === null || d.prev === undefined) {
     return `<span class="kpi-sub">sem comparacao</span>`;
   }
-  const arrow = d.dir === "up" ? "&#9650;" : d.dir === "down" ? "&#9660;" : "&#8211;";
+  const suffix = opts.suffix || "";
+  const inverse = !!opts.inverse;
+  const arrows = { up: "&#9650;", down: "&#9660;", flat: "&#8211;" };
+  const arrow = arrows[d.dir] || arrows.flat;
   const cls = `kpi-delta ${d.dir}${inverse ? " inverse" : ""}`;
-  let label;
-  if (d.pct === null) label = `${d.abs >= 0 ? "+" : ""}${fmtInt(Math.round(d.abs))}${suffix}`;
-  else label = `${d.pct >= 0 ? "+" : ""}${Math.round(d.pct)}%`;
+  const label = deltaLabel(d, suffix);
   return `<span class="${cls}">${arrow} ${label}</span><span class="kpi-sub">vs anterior</span>`;
 }
 
@@ -940,15 +956,25 @@ function dashboardRentalsRows(result) {
   const rows = data.rentalEntries || [];
   const from = result.period?.from || "";
   const to = result.period?.to || "";
-  return rows.filter((r) => {
-    if (dashFilters.agencyId && r.agency_id !== dashFilters.agencyId) return false;
-    if (dashFilters.materialId && r.material_id !== dashFilters.materialId) return false;
-    if (dashFilters.status === "overdue" && !r.overdue) return false;
-    else if (dashFilters.status && dashFilters.status !== "overdue" && r.status !== dashFilters.status) return false;
-    if (from && (!r.checkout_date || r.checkout_date < from)) return false;
-    if (to && (!r.checkout_date || r.checkout_date > to)) return false;
-    return true;
-  });
+  return rows.filter((r) => dashboardRentalMatches(r, from, to));
+}
+
+function dashboardRentalMatches(r, from, to) {
+  if (dashFilters.agencyId && r.agency_id !== dashFilters.agencyId) return false;
+  if (dashFilters.materialId && r.material_id !== dashFilters.materialId) return false;
+  return dashboardStatusMatches(r) && dashboardDateMatches(r, from, to);
+}
+
+function dashboardStatusMatches(r) {
+  if (dashFilters.status === "overdue") return !!r.overdue;
+  return !dashFilters.status || r.status === dashFilters.status;
+}
+
+function dashboardDateMatches(r, from, to) {
+  if (!from && !to) return true;
+  if (!r.checkout_date) return false;
+  if (from && r.checkout_date < from) return false;
+  return !to || r.checkout_date <= to;
 }
 
 function openDashboardDetail(kind) {
@@ -1118,76 +1144,94 @@ function stockProductDetailRows(products) {
   ]);
 }
 
+const STOCK_PRODUCT_HEADERS = ["Codigo", "Produto", "Categoria", "Fornecedor", "Atual", "Min.", "Comprar", "Valor", "Situacao"];
+const STOCK_STATUS_LABELS = {
+  ok: "Dentro da faixa",
+  low: "Abaixo do minimo",
+  empty: "Sem estoque",
+  excess: "Excedente",
+};
+
+function openStockProductsFilteredDetail(products) {
+  return openDetailModal(
+    "Produtos filtrados",
+    detailIntro("Produtos considerados nos indicadores atuais do dashboard de estoque.") +
+      detailTable(STOCK_PRODUCT_HEADERS, stockProductDetailRows(products))
+  );
+}
+
+function openStockPurchaseDetail(products) {
+  const rows = products.filter((p) => purchaseNeeded(p) > 0).sort((a, b) => purchaseNeeded(b) - purchaseNeeded(a));
+  return openDetailModal(
+    "Comprar para atingir o estoque minimo",
+    detailIntro("Produtos abaixo do estoque minimo, com quantidade sugerida de compra.") +
+      detailTable(STOCK_PRODUCT_HEADERS, stockProductDetailRows(rows))
+  );
+}
+
+function openStockExcessDetail(products) {
+  const rows = products.filter((p) => p.status === "excess");
+  return openDetailModal(
+    "Produtos excedentes",
+    detailIntro("Produtos acima do estoque maximo definido.") +
+      detailTable(STOCK_PRODUCT_HEADERS, stockProductDetailRows(rows))
+  );
+}
+
+function openStockStatusDetail(products) {
+  const counts = products.reduce((acc, p) => {
+    const key = p.status || "sem_status";
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+  const rows = Object.entries(counts).map(([k, v]) => [escapeHtml(STOCK_STATUS_LABELS[k] || k), escapeHtml(fmtInt(v))]);
+  return openDetailModal(
+    "Situacao do estoque",
+    detailIntro("Resumo por situacao e lista completa de produtos filtrados.") +
+      detailTable(["Situacao", "Produtos"], rows) +
+      `<h4 class="detail-subtitle">Produtos</h4>` +
+      detailTable(STOCK_PRODUCT_HEADERS, stockProductDetailRows(products))
+  );
+}
+
+function stockCategoryRows(products) {
+  const byCategory = new Map();
+  for (const p of products) {
+    const cat = p.category || "Sem categoria";
+    const cur = byCategory.get(cat) || { products: 0, units: 0, value: 0 };
+    cur.products += 1;
+    cur.units += Number(p.current_stock) || 0;
+    cur.value += Number(p.stock_value) || 0;
+    byCategory.set(cat, cur);
+  }
+  return Array.from(byCategory.entries())
+    .sort((a, b) => b[1].units - a[1].units)
+    .map(([cat, info]) => [
+      escapeHtml(cat),
+      escapeHtml(fmtInt(info.products)),
+      escapeHtml(fmtInt(info.units)),
+      escapeHtml(fmtMoney(info.value)),
+    ]);
+}
+
+function openStockCategoryDetail(products) {
+  return openDetailModal(
+    "Estoque por categoria",
+    detailIntro("Totais agrupados pelas categorias dos produtos filtrados.") +
+      detailTable(["Categoria", "Produtos", "Unidades", "Valor estimado"], stockCategoryRows(products))
+  );
+}
+
 function openStockDashboardDetail(kind) {
   const products = stockDashboardProducts();
-  const statusLabels = {
-    ok: "Dentro da faixa",
-    low: "Abaixo do minimo",
-    empty: "Sem estoque",
-    excess: "Excedente",
+  const handlers = {
+    "stock-products-filtered": openStockProductsFilteredDetail,
+    "stock-purchase": openStockPurchaseDetail,
+    "stock-excess": openStockExcessDetail,
+    "stock-status": openStockStatusDetail,
+    "stock-category": openStockCategoryDetail,
   };
-  const productHeaders = ["Codigo", "Produto", "Categoria", "Fornecedor", "Atual", "Min.", "Comprar", "Valor", "Situacao"];
-  if (kind === "stock-products-filtered") {
-    return openDetailModal(
-      "Produtos filtrados",
-      detailIntro("Produtos considerados nos indicadores atuais do dashboard de estoque.") +
-        detailTable(productHeaders, stockProductDetailRows(products))
-    );
-  }
-  if (kind === "stock-purchase") {
-    const rows = products.filter((p) => purchaseNeeded(p) > 0).sort((a, b) => purchaseNeeded(b) - purchaseNeeded(a));
-    return openDetailModal(
-      "Comprar para atingir o estoque minimo",
-      detailIntro("Produtos abaixo do estoque minimo, com quantidade sugerida de compra.") +
-        detailTable(productHeaders, stockProductDetailRows(rows))
-    );
-  }
-  if (kind === "stock-excess") {
-    const rows = products.filter((p) => p.status === "excess");
-    return openDetailModal(
-      "Produtos excedentes",
-      detailIntro("Produtos acima do estoque maximo definido.") +
-        detailTable(productHeaders, stockProductDetailRows(rows))
-    );
-  }
-  if (kind === "stock-status") {
-    const counts = products.reduce((acc, p) => {
-      const key = p.status || "sem_status";
-      acc[key] = (acc[key] || 0) + 1;
-      return acc;
-    }, {});
-    return openDetailModal(
-      "Situacao do estoque",
-      detailIntro("Resumo por situacao e lista completa de produtos filtrados.") +
-        detailTable(["Situacao", "Produtos"], Object.entries(counts).map(([k, v]) => [escapeHtml(statusLabels[k] || k), escapeHtml(fmtInt(v))])) +
-        `<h4 class="detail-subtitle">Produtos</h4>` +
-        detailTable(productHeaders, stockProductDetailRows(products))
-    );
-  }
-  if (kind === "stock-category") {
-    const byCategory = new Map();
-    for (const p of products) {
-      const cat = p.category || "Sem categoria";
-      const cur = byCategory.get(cat) || { products: 0, units: 0, value: 0 };
-      cur.products += 1;
-      cur.units += Number(p.current_stock) || 0;
-      cur.value += Number(p.stock_value) || 0;
-      byCategory.set(cat, cur);
-    }
-    const rows = Array.from(byCategory.entries())
-      .sort((a, b) => b[1].units - a[1].units)
-      .map(([cat, info]) => [
-        escapeHtml(cat),
-        escapeHtml(fmtInt(info.products)),
-        escapeHtml(fmtInt(info.units)),
-        escapeHtml(fmtMoney(info.value)),
-      ]);
-    return openDetailModal(
-      "Estoque por categoria",
-      detailIntro("Totais agrupados pelas categorias dos produtos filtrados.") +
-        detailTable(["Categoria", "Produtos", "Unidades", "Valor estimado"], rows)
-    );
-  }
+  return handlers[kind] ? handlers[kind](products) : undefined;
 }
 
 function openDetail(kind) {
@@ -1385,19 +1429,23 @@ function filteredStockProducts({ searchId, categoryId, supplierId, statusId }) {
   const category = $(categoryId)?.value || "";
   const supplier = $(supplierId)?.value || "";
   const status = $(statusId)?.value || "";
-  return (data.stockProducts || []).filter((p) => {
-    const needed = purchaseNeeded(p);
-    if (category && p.category !== category) return false;
-    if (supplier && p.supplier !== supplier) return false;
-    if (status === "needs_purchase" && needed <= 0) return false;
-    else if (status && status !== "needs_purchase" && p.status !== status) return false;
-    return !term ||
-      p.id.toLowerCase().includes(term) ||
-      p.name.toLowerCase().includes(term) ||
-      (p.category || "").toLowerCase().includes(term) ||
-      (p.supplier || "").toLowerCase().includes(term) ||
-      (p.notes || "").toLowerCase().includes(term);
-  });
+  return (data.stockProducts || []).filter((p) => stockProductMatchesFilters(p, { term, category, supplier, status }));
+}
+
+function textIncludesTerm(values, term) {
+  return !term || values.some((value) => String(value || "").toLowerCase().includes(term));
+}
+
+function stockProductStatusMatches(p, status) {
+  if (status === "needs_purchase") return purchaseNeeded(p) > 0;
+  return !status || p.status === status;
+}
+
+function stockProductMatchesFilters(p, filters) {
+  if (filters.category && p.category !== filters.category) return false;
+  if (filters.supplier && p.supplier !== filters.supplier) return false;
+  if (!stockProductStatusMatches(p, filters.status)) return false;
+  return textIncludesTerm([p.id, p.name, p.category, p.supplier, p.notes], filters.term);
 }
 
 function movementTypeBadge(type) {
@@ -1572,26 +1620,44 @@ function renderStockProducts() {
 
 function getFilteredStockMovements() {
   populateStockFilterOptions();
-  const term = ($("#stockMovementSearch")?.value || "").trim().toLowerCase();
-  const productId = $("#stockMovementProductFilter")?.value || "";
-  const category = $("#stockMovementCategoryFilter")?.value || "";
-  const type = $("#stockMovementTypeFilter")?.value || "";
-  const from = $("#stockMovementFrom")?.value || "";
-  const to = $("#stockMovementTo")?.value || "";
+  const filters = readStockMovementFilters();
   const productById = new Map((data.stockProducts || []).map((p) => [p.id, p]));
-  return (data.stockMovements || []).filter((m) => {
-    const p = productById.get(m.product_id);
-    if (productId && m.product_id !== productId) return false;
-    if (category && (p?.category || "") !== category) return false;
-    if (type && m.type !== type) return false;
-    if (from && (!m.movement_date || m.movement_date < from)) return false;
-    if (to && (!m.movement_date || m.movement_date > to)) return false;
-    return !term ||
-      (m.product_name || "").toLowerCase().includes(term) ||
-      (m.product_id || "").toLowerCase().includes(term) ||
-      (p?.category || "").toLowerCase().includes(term) ||
-      (m.notes || "").toLowerCase().includes(term);
-  });
+  return (data.stockMovements || []).filter((m) => stockMovementMatchesFilters(m, productById.get(m.product_id), filters));
+}
+
+function inputValue(selector) {
+  const el = $(selector);
+  return el ? el.value || "" : "";
+}
+
+function readStockMovementFilters() {
+  return {
+    term: inputValue("#stockMovementSearch").trim().toLowerCase(),
+    productId: inputValue("#stockMovementProductFilter"),
+    category: inputValue("#stockMovementCategoryFilter"),
+    type: inputValue("#stockMovementTypeFilter"),
+    from: inputValue("#stockMovementFrom"),
+    to: inputValue("#stockMovementTo"),
+  };
+}
+
+function stockMovementEntityMatches(m, product, filters) {
+  if (filters.productId && m.product_id !== filters.productId) return false;
+  if (filters.category && (product?.category || "") !== filters.category) return false;
+  return !filters.type || m.type === filters.type;
+}
+
+function stockMovementMatchesFilters(m, product, filters) {
+  if (!stockMovementEntityMatches(m, product, filters)) return false;
+  if (!dateInRange(m.movement_date, filters.from, filters.to)) return false;
+  return textIncludesTerm([m.product_name, m.product_id, product?.category, m.notes], filters.term);
+}
+
+function dateInRange(value, from, to) {
+  if (!from && !to) return true;
+  if (!value) return false;
+  if (from && value < from) return false;
+  return !to || value <= to;
 }
 
 function stockProductSortValue(p, key) {
@@ -1971,6 +2037,32 @@ function rentalSearchScore(r, term) {
   return fields.includes(q) ? 1 : -1;
 }
 
+function rentalStatusMatches(rental, status) {
+  if (status === "overdue") return !!rental.overdue;
+  if (status === "alugado") return rental.status === "alugado" || rental.status === "parcial";
+  return !status || rental.status === status;
+}
+
+function rentalEntityMatches(rental, filters) {
+  const items = rental.items || [];
+  if (filters.agencyId && rental.agency_id !== filters.agencyId) return false;
+  if (filters.agencyCode && !String(rental.agency_code || "").toLowerCase().includes(filters.agencyCode)) return false;
+  if (filters.materialId && !items.some((it) => it.material_id === filters.materialId)) return false;
+  return rentalStatusMatches(rental, filters.status);
+}
+
+function rentalDateFiltersMatch(rental, filters) {
+  if (!dateInRange(rental.checkout_date, filters.checkoutFrom, filters.checkoutTo)) return false;
+  return dateInRange(rental.expected_return_date, filters.returnFrom, filters.returnTo);
+}
+
+function rentalEntryMatchesFilters(entry, filters) {
+  if (filters.term && entry.searchScore < 0) return false;
+  if (filters.overdueOnly && !entry.rental.overdue) return false;
+  if (!rentalEntityMatches(entry.rental, filters)) return false;
+  return rentalDateFiltersMatch(entry.rental, filters);
+}
+
 function renderRentals() {
   const term = $("#rentalSearch").value.trim();
   const agencyId = $("#rentalAgencyFilter").value;
@@ -1998,29 +2090,11 @@ function renderRentals() {
       .map((m) => ({ value: m.id, label: m.name }))
   );
 
-  const rows = data.rentals.map((r) => ({ rental: r, searchScore: rentalSearchScore(r, term) })).filter((entry) => {
-    const r = entry.rental;
-    const items = r.items || [];
-    if (term && entry.searchScore < 0) return false;
-
-    if (agencyId && r.agency_id !== agencyId) return false;
-    if (agencyCode && !String(r.agency_code || "").toLowerCase().includes(agencyCode)) return false;
-    if (materialId && !items.some((it) => it.material_id === materialId)) return false;
-
-    if (status === "overdue") { if (!r.overdue) return false; }
-    else if (status === "alugado") { if (r.status !== "alugado" && r.status !== "parcial") return false; }
-    else if (status) { if (r.status !== status) return false; }
-
-    if (overdueOnly && !r.overdue) return false;
-
-    // Faixas de data (comparacao lexicografica de YYYY-MM-DD).
-    if (checkoutFrom && (!r.checkout_date || r.checkout_date < checkoutFrom)) return false;
-    if (checkoutTo && (!r.checkout_date || r.checkout_date > checkoutTo)) return false;
-    if (returnFrom && (!r.expected_return_date || r.expected_return_date < returnFrom)) return false;
-    if (returnTo && (!r.expected_return_date || r.expected_return_date > returnTo)) return false;
-
-    return true;
-  }).map((entry) => entry.rental);
+  const filters = { term, agencyId, agencyCode, materialId, status, checkoutFrom, checkoutTo, returnFrom, returnTo, overdueOnly };
+  const rows = data.rentals
+    .map((r) => ({ rental: r, searchScore: rentalSearchScore(r, term) }))
+    .filter((entry) => rentalEntryMatchesFilters(entry, filters))
+    .map((entry) => entry.rental);
   sortRows(rows, "rentals", (r, key) => {
     if (key === "materials") return (r.items || []).map((it) => it.material_name).join(", ");
     if (key === "total_quantity") return r.total_quantity;
@@ -2289,15 +2363,17 @@ function openRentalForm(rental) {
   const periodStatus = () => {
     const cIso = checkoutH.value;
     const rIso = returnH.value;
-    const cText = (checkoutV?.value || "").trim();
-    const rText = (returnV?.value || "").trim();
+    const cText = checkoutV ? checkoutV.value.trim() : "";
+    const rText = returnV ? returnV.value.trim() : "";
     const cOk = DateUtils.isValidISO(cIso);
     const rOk = DateUtils.isValidISO(rIso);
-    if ((cText && !cOk) || (rText && !rOk)) return "invalid";
+    if (typedInvalidDate(cText, cOk) || typedInvalidDate(rText, rOk)) return "invalid";
     if (!cOk || !rOk) return "incomplete";
     if (rIso < cIso) return "order";
     return "ok";
   };
+
+  const typedInvalidDate = (text, valid) => !!text && !valid;
 
   const availOf = (materialId) => (availMap ? Number(availMap[materialId] ?? 0) : null);
 
@@ -2305,46 +2381,46 @@ function openRentalForm(rental) {
 
   const activeRows = () => itemRows.filter((row) => row.status !== "devolvido");
 
-  const itemRowHtml = (row) => {
-    if (row.status === "devolvido") {
-      const m = materialById.get(row.material_id);
-      return `<div class="rental-item-row returned" data-uid="${row.uid}">
+  const returnedItemRowHtml = (row) => {
+    const m = materialById.get(row.material_id);
+    return `<div class="rental-item-row returned" data-uid="${row.uid}">
         <span class="rental-item-locked">
           <span class="swatch" style="background:${escapeHtml(m?.color || DEFAULT_MATERIAL_COLOR)}"></span>
           ${escapeHtml(row.quantity)}x ${escapeHtml(m?.name || "(material removido)")}
         </span>
         <span class="badge badge-ok">Devolvido em ${fmtDate(row.actual_return_date)}</span>
       </div>`;
-    }
+  };
 
+  const itemOptionHtml = (m, row, usedByOthers) => {
+    const av = availOf(m.id);
+    const isSelected = row.material_id === m.id;
+    const duplicated = usedByOthers.has(m.id);
+    const noStock = av !== null && av <= 0 && !isSelected;
+    const disabled = duplicated || noStock ? " disabled" : "";
+    const suffix = duplicated
+      ? " (ja adicionado)"
+      : av !== null ? ` — ${Math.max(0, av)} de ${Number(m.total_quantity) || 0} disp.` : "";
+    return `<option value="${escapeHtml(m.id)}"${isSelected ? " selected" : ""}${disabled}>${escapeHtml(m.name)}${escapeHtml(suffix)}</option>`;
+  };
+
+  const itemAvailabilityHint = (row, av) => {
+    if (!row.material_id || av === null) return "";
+    if (av <= 0) return `<span class="rental-item-avail warn">Indisponivel no periodo</span>`;
+    return `<span class="rental-item-avail">Disponivel no periodo: <strong>${av}</strong></span>`;
+  };
+
+  const itemRowHtml = (row) => {
+    if (row.status === "devolvido") return returnedItemRowHtml(row);
     const ready = periodStatus() === "ok" && availMap && !loading;
     const usedByOthers = new Set(
       itemRows.filter((r2) => r2.uid !== row.uid && r2.material_id).map((r2) => r2.material_id)
     );
-    const options = materialsSorted
-      .map((m) => {
-        const av = availOf(m.id);
-        const isSelected = row.material_id === m.id;
-        const duplicated = usedByOthers.has(m.id);
-        const noStock = av !== null && av <= 0 && !isSelected;
-        const disabled = duplicated || noStock ? " disabled" : "";
-        let suffix = "";
-        if (duplicated) suffix = " (ja adicionado)";
-        else if (av !== null) suffix = ` — ${Math.max(0, av)} de ${Number(m.total_quantity) || 0} disp.`;
-        return `<option value="${escapeHtml(m.id)}"${isSelected ? " selected" : ""}${disabled}>${escapeHtml(m.name)}${escapeHtml(suffix)}</option>`;
-      })
-      .join("");
-
+    const options = materialsSorted.map((m) => itemOptionHtml(m, row, usedByOthers)).join("");
     const av = row.material_id ? availOf(row.material_id) : null;
     const maxAttr = av !== null && av > 0 ? ` max="${av}"` : "";
     const removable = activeRows().length > 1;
-    let rowHint = "";
-    if (row.material_id && av !== null) {
-      rowHint =
-        av <= 0
-          ? `<span class="rental-item-avail warn">Indisponivel no periodo</span>`
-          : `<span class="rental-item-avail">Disponivel no periodo: <strong>${av}</strong></span>`;
-    }
+    const rowHint = itemAvailabilityHint(row, av);
 
     return `<div class="rental-item-row" data-uid="${row.uid}">
       <select data-item-material aria-label="Material" ${ready ? "" : "disabled"}>
@@ -2361,20 +2437,20 @@ function openRentalForm(rental) {
     itemsList.innerHTML = itemRows.map(itemRowHtml).join("");
 
     const status = periodStatus();
-    itemsHint.className = "hint";
-    if (status === "incomplete") {
-      itemsHint.textContent = "Informe a retirada e a devolucao prevista para ver a disponibilidade dos materiais.";
-    } else if (status === "invalid") {
-      itemsHint.className = "hint warn";
-      itemsHint.textContent = "Verifique as datas informadas (formato dd/mm/aaaa).";
-    } else if (status === "order") {
-      itemsHint.className = "hint warn";
-      itemsHint.textContent = "A devolucao prevista nao pode ser anterior a retirada.";
-    } else if (loading) {
-      itemsHint.textContent = "Calculando disponibilidade no periodo...";
-    } else {
-      itemsHint.textContent = "A disponibilidade considera todos os alugueis ativos no periodo selecionado.";
-    }
+    const hint = periodHint(status, loading);
+    itemsHint.className = hint.className;
+    itemsHint.textContent = hint.text;
+  };
+
+  const periodHint = (status, isLoading) => {
+    const hints = {
+      incomplete: ["hint", "Informe a retirada e a devolucao prevista para ver a disponibilidade dos materiais."],
+      invalid: ["hint warn", "Verifique as datas informadas (formato dd/mm/aaaa)."],
+      order: ["hint warn", "A devolucao prevista nao pode ser anterior a retirada."],
+    };
+    if (hints[status]) return { className: hints[status][0], text: hints[status][1] };
+    if (isLoading) return { className: "hint", text: "Calculando disponibilidade no periodo..." };
+    return { className: "hint", text: "A disponibilidade considera todos os alugueis ativos no periodo selecionado." };
   };
 
   // Resumo dos itens antes da confirmacao.
@@ -2386,16 +2462,22 @@ function openRentalForm(rental) {
       const returned = row.status === "devolvido" ? " (devolvido)" : "";
       parts.push(`<li>${escapeHtml(row.quantity)}x ${escapeHtml(m?.name || "(material removido)")}${returned}</li>`);
     }
-    const period =
-      DateUtils.isValidISO(checkoutH.value) && DateUtils.isValidISO(returnH.value)
-        ? `Retirada em <strong>${fmtDate(checkoutH.value)}</strong>, devolucao prevista em <strong>${fmtDate(returnH.value)}</strong>.`
-        : "";
-    const agency = agencySel.selectedOptions[0]?.value
-      ? `Agencia: <strong>${escapeHtml(agencySel.selectedOptions[0].textContent)}</strong>. `
-      : "";
+    const period = summaryPeriodHtml(checkoutH.value, returnH.value);
+    const agency = summaryAgencyHtml(agencySel);
     summaryEl.innerHTML = parts.length
       ? `<ul class="rental-summary-list">${parts.join("")}</ul><div class="rental-summary-meta">${agency}${period}</div>`
       : `<span class="muted">Nenhum material selecionado ainda.</span>`;
+  };
+
+  const summaryPeriodHtml = (checkout, expectedReturn) => {
+    if (!DateUtils.isValidISO(checkout) || !DateUtils.isValidISO(expectedReturn)) return "";
+    return `Retirada em <strong>${fmtDate(checkout)}</strong>, devolucao prevista em <strong>${fmtDate(expectedReturn)}</strong>.`;
+  };
+
+  const summaryAgencyHtml = (select) => {
+    const selected = select.selectedOptions[0];
+    if (!selected || !selected.value) return "";
+    return `Agencia: <strong>${escapeHtml(selected.textContent)}</strong>. `;
   };
 
   const rerender = () => {
@@ -2405,24 +2487,29 @@ function openRentalForm(rental) {
 
   // Delegacao de eventos da lista de itens (os elementos sao recriados a cada
   // render; o estado vive em itemRows).
-  itemsList.addEventListener("change", (e) => {
+  function itemRowFromEvent(e) {
     const rowEl = e.target.closest(".rental-item-row");
-    if (!rowEl) return;
-    const row = itemRows.find((r2) => String(r2.uid) === rowEl.dataset.uid);
+    return rowEl ? itemRows.find((r2) => String(r2.uid) === rowEl.dataset.uid) : null;
+  }
+
+  function clampRowQuantity(row) {
+    const av = row.material_id ? availOf(row.material_id) : null;
+    if (av !== null && av > 0 && row.quantity > av) row.quantity = av;
+  }
+
+  function handleItemChange(e) {
+    const row = itemRowFromEvent(e);
     if (!row) return;
-    if (e.target.matches("[data-item-material]")) {
-      row.material_id = e.target.value;
-      const av = availOf(row.material_id);
-      if (av !== null && av > 0 && row.quantity > av) row.quantity = av;
-      rerender();
-    } else if (e.target.matches("[data-item-qty]")) {
+    if (e.target.matches("[data-item-material]")) row.material_id = e.target.value;
+    if (e.target.matches("[data-item-qty]")) {
       const n = Math.floor(Number(e.target.value));
       row.quantity = Number.isFinite(n) && n >= 1 ? n : 1;
-      const av = row.material_id ? availOf(row.material_id) : null;
-      if (av !== null && av > 0 && row.quantity > av) row.quantity = av;
-      rerender();
     }
-  });
+    clampRowQuantity(row);
+    rerender();
+  }
+
+  itemsList.addEventListener("change", handleItemChange);
   itemsList.addEventListener("input", (e) => {
     if (!e.target.matches("[data-item-qty]")) return;
     const rowEl = e.target.closest(".rental-item-row");
@@ -2483,71 +2570,62 @@ function openRentalForm(rental) {
       : `<span class="muted">Nenhum anexo.</span>`;
   };
 
-  $("#addAttachBtn").addEventListener("click", async () => {
+  async function addAttachmentsFromPicker() {
     const res = await window.api.pickAttachments();
     if (!res || res.canceled || !res.ok) return;
-    const valid = [];
-    for (const f of res.files || []) {
-      if (!f.valid) {
-        toast(f.message || `Arquivo nao permitido: ${f.name}`, "warn");
-        continue;
-      }
-      valid.push(f);
-    }
+    const valid = validPickedFiles(res.files || []);
     if (!valid.length) return;
 
     if (editing) {
-      // Aluguel ja existe: copia imediatamente.
-      const out = await window.api.addAttachments({
-        rental_id: rental.id,
-        files: valid.map((f) => ({ path: f.path, name: f.name })),
-      });
-      if (out && out.ok === false) {
-        toast(out.message || "Falha ao adicionar anexos.", "error");
-        return;
-      }
-      existingAtts = [...existingAtts, ...((out && out.attachments) || [])];
-      renderAttachments();
-      toast("Anexo(s) adicionado(s).", "success");
-      loadAll();
+      await addExistingRentalAttachments(valid);
     } else {
-      for (const f of valid) {
-        if (!pendingFiles.some((p) => p.path === f.path)) pendingFiles.push(f);
-      }
-      renderAttachments();
+      addPendingAttachments(valid);
     }
-  });
+  }
+
+  function validPickedFiles(files) {
+    const valid = [];
+    for (const f of files) {
+      if (f.valid) valid.push(f);
+      else toast(f.message || `Arquivo nao permitido: ${f.name}`, "warn");
+    }
+    return valid;
+  }
+
+  async function addExistingRentalAttachments(files) {
+    const out = await window.api.addAttachments({
+      rental_id: rental.id,
+      files: files.map((f) => ({ path: f.path, name: f.name })),
+    });
+    if (out && out.ok === false) {
+      toast(out.message || "Falha ao adicionar anexos.", "error");
+      return;
+    }
+    existingAtts = [...existingAtts, ...((out && out.attachments) || [])];
+    renderAttachments();
+    toast("Anexo(s) adicionado(s).", "success");
+    loadAll();
+  }
+
+  function addPendingAttachments(files) {
+    for (const f of files) {
+      if (!pendingFiles.some((p) => p.path === f.path)) pendingFiles.push(f);
+    }
+    renderAttachments();
+  }
+
+  $("#addAttachBtn").addEventListener("click", addAttachmentsFromPicker);
 
   attachListEl.addEventListener("click", async (e) => {
     const openId = e.target.closest("[data-att-open]")?.getAttribute("data-att-open");
-    if (openId) {
-      const res = await window.api.openAttachment(openId);
-      if (res && res.ok === false) {
-        toast(res.message || "Nao foi possivel abrir o anexo.", "error");
-        if (res.code === "MISSING") {
-          existingAtts = existingAtts.map((a) => (a.id === openId ? { ...a, missing: true } : a));
-          renderAttachments();
-        }
-      }
-      return;
-    }
+    if (openId) return await openAttachmentFromList(openId);
 
     const removeId = e.target.closest("[data-att-remove]")?.getAttribute("data-att-remove");
     if (removeId) {
       const att = existingAtts.find((a) => a.id === removeId);
       confirmDialog(
         `Remover o anexo "${att?.file_name}"? O arquivo sera excluido da pasta de dados.`,
-        async () => {
-          const res = await window.api.removeAttachment(removeId);
-          if (res && res.ok === false) {
-            toast(res.message || "Falha ao remover o anexo.", "error");
-            return;
-          }
-          existingAtts = existingAtts.filter((a) => a.id !== removeId);
-          renderAttachments();
-          toast("Anexo removido.", "success");
-          loadAll();
-        },
+        () => removeExistingAttachment(removeId),
         { title: "Remover anexo", okLabel: "Remover" }
       );
       return;
@@ -2560,33 +2638,65 @@ function openRentalForm(rental) {
     }
   });
 
+  async function openAttachmentFromList(openId) {
+    const res = await window.api.openAttachment(openId);
+    if (res && res.ok === false) handleOpenAttachmentError(openId, res);
+  }
+
+  function handleOpenAttachmentError(openId, res) {
+    toast(res.message || "Nao foi possivel abrir o anexo.", "error");
+    if (res.code !== "MISSING") return;
+    existingAtts = existingAtts.map((a) => (a.id === openId ? { ...a, missing: true } : a));
+    renderAttachments();
+  }
+
+  async function removeExistingAttachment(removeId) {
+    const res = await window.api.removeAttachment(removeId);
+    if (res && res.ok === false) {
+      toast(res.message || "Falha ao remover o anexo.", "error");
+      return;
+    }
+    existingAtts = existingAtts.filter((a) => a.id !== removeId);
+    renderAttachments();
+    toast("Anexo removido.", "success");
+    loadAll();
+  }
+
   // --------------------------- Disponibilidade ---------------------------
+
+  function resetAvailability() {
+    availMap = null;
+    loading = false;
+    rerender();
+  }
+
+  async function loadAvailability() {
+    const res = await window.api.getAvailability({
+      checkout_date: checkoutH.value,
+      expected_return_date: returnH.value,
+      excludeId,
+    });
+    return res && res.ok ? res.available || {} : {};
+  }
+
+  function clampActiveRows() {
+    for (const row of activeRows()) clampRowQuantity(row);
+  }
 
   const refreshAvailability = async () => {
     if (periodStatus() !== "ok") {
-      availMap = null;
-      loading = false;
-      rerender();
+      resetAvailability();
       return;
     }
     loading = true;
     rerender();
     try {
-      const res = await window.api.getAvailability({
-        checkout_date: checkoutH.value,
-        expected_return_date: returnH.value,
-        excludeId,
-      });
-      availMap = res && res.ok ? res.available || {} : {};
+      availMap = await loadAvailability();
     } catch {
       availMap = {};
     }
     loading = false;
-    // Reaplica os limites de quantidade com a nova disponibilidade.
-    for (const row of activeRows()) {
-      const av = row.material_id ? availOf(row.material_id) : null;
-      if (av !== null && av > 0 && row.quantity > av) row.quantity = av;
-    }
+    clampActiveRows();
     rerender();
   };
 
@@ -2976,6 +3086,117 @@ function switchView(view) {
 
 // ----------------------------- Eventos -----------------------------
 
+function handleSortClick(sortHeader) {
+  setTableSort(sortHeader.dataset.sortTable, sortHeader.dataset.sortKey, sortHeader.dataset.sortDefault || "asc");
+  const renderByTable = {
+    materials: renderMaterials,
+    agencies: renderAgencies,
+    rentals: renderRentals,
+    stockPurchase: renderPurchaseAlerts,
+    stockProducts: renderStockProducts,
+    stockMovements: renderStockMovements,
+  };
+  renderByTable[sortHeader.dataset.sortTable]?.();
+  renderSortIndicators();
+}
+
+function handleNavClick(target) {
+  const navTarget = target.getAttribute("data-nav-target");
+  if (!navTarget) return false;
+  const productFilter = target.getAttribute("data-product-filter");
+  switchView(navTarget);
+  if (navTarget === "stock-movements" && productFilter) {
+    $("#stockMovementProductFilter").value = productFilter;
+    renderStockMovements();
+  }
+  return true;
+}
+
+function handleEntityEdit(target) {
+  const actions = [
+    ["data-edit-material", () => openMaterialForm(data.materials.find((m) => m.id === target.getAttribute("data-edit-material")))],
+    ["data-edit-stock-product", () => openStockProductForm(data.stockProducts.find((p) => p.id === target.getAttribute("data-edit-stock-product")))],
+    ["data-edit-stock-movement", () => openStockMovementForm(data.stockMovements.find((m) => m.id === target.getAttribute("data-edit-stock-movement")))],
+    ["data-edit-agency", () => openAgencyForm(data.agencies.find((a) => a.id === target.getAttribute("data-edit-agency")))],
+    ["data-edit-rental", () => openRentalForm(data.rentals.find((r) => r.id === target.getAttribute("data-edit-rental")))],
+  ];
+  const action = actions.find(([attr]) => target.getAttribute(attr));
+  if (!action) return false;
+  action[1]();
+  return true;
+}
+
+function confirmDeleteMaterial(id) {
+  const m = data.materials.find((x) => x.id === id);
+  return confirmDialog(`Excluir o material "${m?.name}"? Esta acao nao pode ser desfeita.`, () =>
+    handleResult(window.api.deleteMaterial(id), "Material excluido.")
+  );
+}
+
+function confirmDeleteStockProduct(id) {
+  const p = data.stockProducts.find((x) => x.id === id);
+  return confirmDialog(`Excluir o produto "${p?.name}"?`, () =>
+    handleResult(window.api.deleteStockProduct(id), "Produto excluido.")
+  );
+}
+
+function confirmDeleteStockMovement(id) {
+  return confirmDialog("Excluir esta movimentacao de estoque?", () =>
+    handleResult(window.api.deleteStockMovement(id), "Movimentacao excluida.")
+  );
+}
+
+function confirmDeleteAgency(id) {
+  const a = data.agencies.find((x) => x.id === id);
+  return confirmDialog(`Excluir a agencia "${a?.name}"?`, () =>
+    handleResult(window.api.deleteAgency(id), "Agencia excluida.")
+  );
+}
+
+function confirmDeleteRental(id) {
+  const r = data.rentals.find((x) => x.id === id);
+  const hasAtts = (r?.attachments || []).length > 0;
+  return confirmDialog(
+    `Excluir este registro de aluguel do historico?${hasAtts ? " Os anexos tambem serao excluidos." : ""}`,
+    () => handleResult(window.api.deleteRental(id), "Registro excluido.")
+  );
+}
+
+function handleEntityDelete(target) {
+  const actions = [
+    ["data-del-material", confirmDeleteMaterial],
+    ["data-del-stock-product", confirmDeleteStockProduct],
+    ["data-del-stock-movement", confirmDeleteStockMovement],
+    ["data-del-agency", confirmDeleteAgency],
+    ["data-del-rental", confirmDeleteRental],
+  ];
+  const action = actions.find(([attr]) => target.getAttribute(attr));
+  if (!action) return false;
+  action[1](target.getAttribute(action[0]));
+  return true;
+}
+
+function handleReturnRental(target) {
+  const retRent = target.getAttribute("data-return-rental");
+  if (!retRent) return false;
+  const rental = data.rentals.find((x) => x.id === retRent);
+  if (rental) openReturnForm(rental);
+  return true;
+}
+
+function handleDocumentClick(e) {
+  const target = e.target;
+  if (!(target instanceof HTMLElement)) return;
+  const detail = target.closest("[data-detail]");
+  if (detail) return openDetail(detail.getAttribute("data-detail"));
+  const sortHeader = target.closest("th[data-sort-table][data-sort-key]");
+  if (sortHeader) return handleSortClick(sortHeader);
+  if (handleNavClick(target)) return;
+  if (handleEntityEdit(target)) return;
+  if (handleEntityDelete(target)) return;
+  handleReturnRental(target);
+}
+
 function bindEvents() {
   $$(".nav-item").forEach((btn) => btn.addEventListener("click", () => switchView(btn.dataset.view)));
   $("#refreshBtn").addEventListener("click", loadAll);
@@ -3122,106 +3343,7 @@ function bindEvents() {
   $("#templateMovementsBtn").addEventListener("click", () => downloadStockTemplate("movements"));
 
   // Delegacao de cliques nas tabelas (editar / excluir / devolver)
-  document.addEventListener("click", (e) => {
-    const t = e.target;
-    if (!(t instanceof HTMLElement)) return;
-
-    const detail = t.closest("[data-detail]");
-    if (detail) {
-      openDetail(detail.getAttribute("data-detail"));
-      return;
-    }
-
-    const sortHeader = t.closest("th[data-sort-table][data-sort-key]");
-    if (sortHeader) {
-      setTableSort(sortHeader.dataset.sortTable, sortHeader.dataset.sortKey, sortHeader.dataset.sortDefault || "asc");
-      const renderByTable = {
-        materials: renderMaterials,
-        agencies: renderAgencies,
-        rentals: renderRentals,
-        stockPurchase: renderPurchaseAlerts,
-        stockProducts: renderStockProducts,
-        stockMovements: renderStockMovements,
-      };
-      renderByTable[sortHeader.dataset.sortTable]?.();
-      renderSortIndicators();
-      return;
-    }
-
-    const navTarget = t.getAttribute("data-nav-target");
-    if (navTarget) {
-      const productFilter = t.getAttribute("data-product-filter");
-      switchView(navTarget);
-      if (navTarget === "stock-movements" && productFilter) {
-        $("#stockMovementProductFilter").value = productFilter;
-        renderStockMovements();
-      }
-      return;
-    }
-
-    const editMat = t.getAttribute("data-edit-material");
-    if (editMat) return openMaterialForm(data.materials.find((m) => m.id === editMat));
-
-    const delMat = t.getAttribute("data-del-material");
-    if (delMat) {
-      const m = data.materials.find((x) => x.id === delMat);
-      return confirmDialog(`Excluir o material "${m?.name}"? Esta acao nao pode ser desfeita.`, () =>
-        handleResult(window.api.deleteMaterial(delMat), "Material excluido.")
-      );
-    }
-
-    const editStockProduct = t.getAttribute("data-edit-stock-product");
-    if (editStockProduct) return openStockProductForm(data.stockProducts.find((p) => p.id === editStockProduct));
-
-    const delStockProduct = t.getAttribute("data-del-stock-product");
-    if (delStockProduct) {
-      const p = data.stockProducts.find((x) => x.id === delStockProduct);
-      return confirmDialog(`Excluir o produto "${p?.name}"?`, () =>
-        handleResult(window.api.deleteStockProduct(delStockProduct), "Produto excluido.")
-      );
-    }
-
-    const editStockMovement = t.getAttribute("data-edit-stock-movement");
-    if (editStockMovement) return openStockMovementForm(data.stockMovements.find((m) => m.id === editStockMovement));
-
-    const delStockMovement = t.getAttribute("data-del-stock-movement");
-    if (delStockMovement) {
-      return confirmDialog("Excluir esta movimentacao de estoque?", () =>
-        handleResult(window.api.deleteStockMovement(delStockMovement), "Movimentacao excluida.")
-      );
-    }
-
-    const editAg = t.getAttribute("data-edit-agency");
-    if (editAg) return openAgencyForm(data.agencies.find((a) => a.id === editAg));
-
-    const delAg = t.getAttribute("data-del-agency");
-    if (delAg) {
-      const a = data.agencies.find((x) => x.id === delAg);
-      return confirmDialog(`Excluir a agencia "${a?.name}"?`, () =>
-        handleResult(window.api.deleteAgency(delAg), "Agencia excluida.")
-      );
-    }
-
-    const editRent = t.getAttribute("data-edit-rental");
-    if (editRent) return openRentalForm(data.rentals.find((r) => r.id === editRent));
-
-    const retRent = t.getAttribute("data-return-rental");
-    if (retRent) {
-      const r = data.rentals.find((x) => x.id === retRent);
-      if (r) openReturnForm(r);
-      return;
-    }
-
-    const delRent = t.getAttribute("data-del-rental");
-    if (delRent) {
-      const r = data.rentals.find((x) => x.id === delRent);
-      const hasAtts = (r?.attachments || []).length > 0;
-      return confirmDialog(
-        `Excluir este registro de aluguel do historico?${hasAtts ? " Os anexos tambem serao excluidos." : ""}`,
-        () => handleResult(window.api.deleteRental(delRent), "Registro excluido.")
-      );
-    }
-  });
+  document.addEventListener("click", handleDocumentClick);
 
   // Auto-refresh quando os arquivos mudam (outro usuario / sincronizacao).
   window.api.onDataChanged(() => {

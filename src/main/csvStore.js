@@ -238,6 +238,27 @@ function writeAll(filePath, schema, rows) {
   }
 }
 
+function valueFromLegacyRow(row, col) {
+  for (const [oldHeader, key] of Object.entries(LEGACY_HEADER_TO_KEY)) {
+    if (key === col.key && row[oldHeader] !== undefined) return row[oldHeader];
+  }
+  return "";
+}
+
+function normalizeLegacyRow(row, schema) {
+  if (!row || typeof row !== "object") return null;
+
+  const out = {};
+  for (const col of schema) {
+    const value = valueFromLegacyRow(row, col);
+    out[col.key] = value === undefined || value === null ? "" : String(value).trim();
+  }
+
+  out.adicionado_em = "";
+  out.alterado_em = "";
+  return out.id ? out : null;
+}
+
 // Migra um arquivo do formato antigo (virgula + cabecalhos em ingles) para o
 // novo arquivo (ponto-e-virgula + cabecalhos em portugues + colunas de data).
 // So roda quando o arquivo novo ainda nao existe e o antigo existe.
@@ -260,26 +281,7 @@ function migrateLegacy(oldPath, newPath, schema) {
   });
 
   const legacyRows = Array.isArray(result.data) ? result.data : [];
-  const rows = [];
-  for (const lr of legacyRows) {
-    if (!lr || typeof lr !== "object") continue;
-    const out = {};
-    for (const col of schema) {
-      // Tenta achar o valor pelo header antigo (ingles) correspondente a key.
-      let value = "";
-      for (const [oldHeader, key] of Object.entries(LEGACY_HEADER_TO_KEY)) {
-        if (key === col.key && lr[oldHeader] !== undefined) {
-          value = lr[oldHeader];
-          break;
-        }
-      }
-      out[col.key] = value === undefined || value === null ? "" : String(value).trim();
-    }
-    // Registros legados ficam com timestamps em branco (data desconhecida).
-    out.adicionado_em = "";
-    out.alterado_em = "";
-    if (out.id) rows.push(out);
-  }
+  const rows = legacyRows.map((row) => normalizeLegacyRow(row, schema)).filter(Boolean);
 
   writeAll(newPath, schema, rows);
   return true;
