@@ -29,7 +29,7 @@
   },
   "build": {
     "appId": "com.cooperativa.aluguelmateriais",
-    "productName": "Aluguel de Materiais",
+    "productName": "Gestão de Materiais",
     "directories": {
       "output": "dist"
     },

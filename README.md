@@ -1,4 +1,4 @@
-# Aluguel de Materiais
+# Gestão de Materiais
 
 Aplicativo desktop (Electron) para uma cooperativa controlar o aluguel/emprestimo de materiais de comunicacao, patrocinio e brindes (baloes, banners, sinalizacao de eventos, brindes personalizados, etc.).
 

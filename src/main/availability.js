@@ -38,6 +38,19 @@ function overlappingRentals(rentals, materialId, checkout, expectedReturn, exclu
   );
 }
 
+function startsInsidePeriod(rental, checkout, expectedReturn) {
+  return rental.checkout_date >= checkout && rental.checkout_date <= expectedReturn;
+}
+
+function reservedOnDay(rentals, day) {
+  return rentals.reduce((sum, r) => {
+    if (r.checkout_date <= day && day <= r.expected_return_date) {
+      return sum + (Number(r.quantity) || 0);
+    }
+    return sum;
+  }, 0);
+}
+
 // Maior quantidade simultaneamente reservada em qualquer dia do intervalo.
 //
 // A ocupacao so AUMENTA no dia de retirada de um aluguel; entre retiradas ela
@@ -51,19 +64,12 @@ function peakReserved(rentals, materialId, checkout, expectedReturn, excludeId) 
 
   const candidateDays = new Set([checkout]);
   for (const r of relevant) {
-    if (r.checkout_date >= checkout && r.checkout_date <= expectedReturn) {
-      candidateDays.add(r.checkout_date);
-    }
+    if (startsInsidePeriod(r, checkout, expectedReturn)) candidateDays.add(r.checkout_date);
   }
 
   let peak = 0;
   for (const day of candidateDays) {
-    let sum = 0;
-    for (const r of relevant) {
-      if (r.checkout_date <= day && day <= r.expected_return_date) {
-        sum += Number(r.quantity) || 0;
-      }
-    }
+    const sum = reservedOnDay(relevant, day);
     if (sum > peak) peak = sum;
   }
   return peak;

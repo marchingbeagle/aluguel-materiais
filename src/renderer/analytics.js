@@ -79,6 +79,33 @@
   // Resolve o periodo de analise a partir do preset (ou de from/to custom).
   // Devolve { from, to } em ISO (inclusivos) e os limites do periodo anterior
   // de mesmo tamanho (prevFrom/prevTo) quando aplicavel.
+  function firstRentalDate(rentals, fallback) {
+    const dates = rentals
+      .map((r) => r.checkout_date)
+      .filter((d) => parseISO(d))
+      .sort();
+    return dates[0] || fallback;
+  }
+
+  function presetFromDate(preset, todayD, rentals) {
+    const presets = {
+      month: () => `${todayD.getFullYear()}-${pad2(todayD.getMonth() + 1)}-01`,
+      last30: () => toISO(addDays(todayD, -29)),
+      last90: () => toISO(addDays(todayD, -89)),
+      year: () => `${todayD.getFullYear()}-01-01`,
+      all: () => firstRentalDate(rentals, toISO(addDays(todayD, -365))),
+    };
+    return presets[preset] ? presets[preset]() : "";
+  }
+
+  function previousPeriod(from, to, preset) {
+    if (preset === "all") return { prevFrom: null, prevTo: null };
+    const span = diffDaysISO(from, to);
+    if (span === null) return { prevFrom: null, prevTo: null };
+    const prevTo = addDaysISO(from, -1);
+    return { prevFrom: addDaysISO(prevTo, -span), prevTo };
+  }
+
   function resolvePeriod(filters, rentals, today) {
     const todayD = parseISO(today) || new Date();
     const toDefault = toISO(todayD);
@@ -88,36 +115,14 @@
 
     if (preset !== "custom") {
       to = toDefault;
-      if (preset === "month") {
-        from = `${todayD.getFullYear()}-${pad2(todayD.getMonth() + 1)}-01`;
-      } else if (preset === "last30") {
-        from = toISO(addDays(todayD, -29));
-      } else if (preset === "last90") {
-        from = toISO(addDays(todayD, -89));
-      } else if (preset === "year") {
-        from = `${todayD.getFullYear()}-01-01`;
-      } else if (preset === "all") {
-        const dates = rentals
-          .map((r) => r.checkout_date)
-          .filter((d) => parseISO(d))
-          .sort();
-        from = dates[0] || toISO(addDays(todayD, -365));
-      }
+      from = presetFromDate(preset, todayD, rentals);
     }
 
     if (!parseISO(from)) from = toISO(addDays(todayD, -29));
     if (!parseISO(to)) to = toDefault;
     if (from > to) [from, to] = [to, from];
 
-    let prevFrom = null;
-    let prevTo = null;
-    if (preset !== "all") {
-      const span = diffDaysISO(from, to);
-      if (span !== null) {
-        prevTo = addDaysISO(from, -1);
-        prevFrom = addDaysISO(prevTo, -span);
-      }
-    }
+    const { prevFrom, prevTo } = previousPeriod(from, to, preset);
 
     return { from, to, prevFrom, prevTo, preset };
   }
@@ -195,47 +200,57 @@
   }
 
   // Gera buckets [{ key, label, from, to }] cobrindo [from, to].
-  function buildBuckets(from, to, gran) {
+  function buildDayBuckets(cursor, end) {
     const buckets = [];
-    let cursor = parseISO(from);
-    const end = parseISO(to);
-    if (!cursor || !end) return buckets;
-
-    if (gran === "day") {
-      while (cursor <= end) {
-        const iso = toISO(cursor);
-        buckets.push({ key: iso, label: iso.slice(8) + "/" + iso.slice(5, 7), from: iso, to: iso });
-        cursor = addDays(cursor, 1);
-      }
-    } else if (gran === "week") {
-      while (cursor <= end) {
-        const startIso = toISO(cursor);
-        const endD = addDays(cursor, 6);
-        const endIso = toISO(endD > end ? end : endD);
-        buckets.push({
-          key: startIso,
-          label: startIso.slice(8) + "/" + startIso.slice(5, 7),
-          from: startIso,
-          to: endIso,
-        });
-        cursor = addDays(cursor, 7);
-      }
-    } else {
-      cursor = new Date(end.getFullYear(), 0, 1) > cursor ? cursor : cursor;
-      cursor = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
-      while (cursor <= end) {
-        const k = `${cursor.getFullYear()}-${pad2(cursor.getMonth() + 1)}`;
-        const lastDay = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
-        buckets.push({
-          key: k,
-          label: monthLabel(k),
-          from: `${k}-01`,
-          to: toISO(lastDay > end ? end : lastDay),
-        });
-        cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
-      }
+    while (cursor <= end) {
+      const iso = toISO(cursor);
+      buckets.push({ key: iso, label: iso.slice(8) + "/" + iso.slice(5, 7), from: iso, to: iso });
+      cursor = addDays(cursor, 1);
     }
     return buckets;
+  }
+
+  function buildWeekBuckets(cursor, end) {
+    const buckets = [];
+    while (cursor <= end) {
+      const startIso = toISO(cursor);
+      const endD = addDays(cursor, 6);
+      const endIso = toISO(endD > end ? end : endD);
+      buckets.push({
+        key: startIso,
+        label: startIso.slice(8) + "/" + startIso.slice(5, 7),
+        from: startIso,
+        to: endIso,
+      });
+      cursor = addDays(cursor, 7);
+    }
+    return buckets;
+  }
+
+  function buildMonthBuckets(cursor, end) {
+    const buckets = [];
+    cursor = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
+    while (cursor <= end) {
+      const k = `${cursor.getFullYear()}-${pad2(cursor.getMonth() + 1)}`;
+      const lastDay = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
+      buckets.push({
+        key: k,
+        label: monthLabel(k),
+        from: `${k}-01`,
+        to: toISO(lastDay > end ? end : lastDay),
+      });
+      cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+    }
+    return buckets;
+  }
+
+  function buildBuckets(from, to, gran) {
+    let cursor = parseISO(from);
+    const end = parseISO(to);
+    if (!cursor || !end) return [];
+    if (gran === "day") return buildDayBuckets(cursor, end);
+    if (gran === "week") return buildWeekBuckets(cursor, end);
+    return buildMonthBuckets(cursor, end);
   }
 
   function bucketIndexFor(iso, buckets) {
@@ -279,7 +294,6 @@
 
     const period = resolvePeriod(filters, allRentals, today);
 
-    const materialById = new Map(materials.map((m) => [m.id, m]));
     const agencyById = new Map(agencies.map((a) => [a.id, a]));
 
     const matching = applyEntityFilters(allRentals, filters);
@@ -287,7 +301,7 @@
     const matchingBookings = dedupeBookings(matching);
 
     // ----- Perfis + segmentos (usados apenas pelos insights) -----
-    const profilesAll = computeAgencyProfiles(matchingBookings, agencies, agencyById, today);
+    const profilesAll = computeAgencyProfiles(matchingBookings, agencies, today);
     const segments = computeSegments(profilesAll);
     const profiles = segments.agencies;
 
@@ -323,7 +337,7 @@
     const topAgencies = computeTopAgencies(bookingsInPeriod, agencyById);
 
     // ----- Desempenho de materiais -----
-    const materialsPerf = computeMaterials(matching, inPeriod, materials, materialById, period, today);
+    const materialsPerf = computeMaterials(matching, inPeriod, materials, period, today);
 
     // ----- Operacional (churn, ativos, proximas devolucoes) -----
     const churnRisk = profiles
@@ -419,21 +433,17 @@
 
   // bookingsInPeriod/bookingsInPrev: visao por aluguel (deduplicada);
   // matching: entradas por item (para taxa de atraso e duracao por item).
+  function previousWindowValue(period, compute) {
+    return period.prevFrom && period.prevTo ? compute(period.prevFrom, period.prevTo) : null;
+  }
+
   function computeKpis(matching, bookingsInPeriod, bookingsInPrev, period, today) {
     const cur = periodMetrics(bookingsInPeriod, today);
     const prev = bookingsInPrev ? periodMetrics(bookingsInPrev, today) : null;
-
     const curLate = lateRate(matching, period.from, period.to, today);
-    const prevLate =
-      period.prevFrom && period.prevTo
-        ? lateRate(matching, period.prevFrom, period.prevTo, today)
-        : null;
-
     const curDur = avgDuration(matching, period.from, period.to);
-    const prevDur =
-      period.prevFrom && period.prevTo
-        ? avgDuration(matching, period.prevFrom, period.prevTo)
-        : null;
+    const prevLate = previousWindowValue(period, (from, to) => lateRate(matching, from, to, today));
+    const prevDur = previousWindowValue(period, (from, to) => avgDuration(matching, from, to));
 
     return {
       rentals: delta(cur.rentals, prev ? prev.rentals : null),
@@ -502,57 +512,67 @@
 
   // ----------------------------- Perfis de agencia --------------------------
 
-  function computeAgencyProfiles(matching, agencies, agencyById, today) {
+  function groupByAgency(rentals) {
     const byAgency = new Map();
-    for (const r of matching) {
+    for (const r of rentals) {
       if (!byAgency.has(r.agency_id)) byAgency.set(r.agency_id, []);
       byAgency.get(r.agency_id).push(r);
     }
+    return byAgency;
+  }
 
-    const profiles = [];
-    for (const a of agencies) {
-      const rs = (byAgency.get(a.id) || []).filter((r) => parseISO(r.checkout_date));
-      rs.sort((x, y) => x.checkout_date.localeCompare(y.checkout_date));
-      const dates = rs.map((r) => r.checkout_date);
-      const frequency = rs.length;
-      const quantity = rs.reduce((s, r) => s + (Number(r.quantity) || 0), 0);
-      const firstRental = dates[0] || "";
-      const lastRental = dates[dates.length - 1] || "";
-      const recencyDays = lastRental ? diffDaysISO(lastRental, today) : null;
-
-      // Intervalo tipico entre alugueis (mediana dos gaps).
-      const gaps = [];
-      for (let i = 1; i < dates.length; i++) {
-        const g = diffDaysISO(dates[i - 1], dates[i]);
-        if (g !== null && g >= 0) gaps.push(g);
-      }
-      const medianInterval = gaps.length ? median(gaps) : null;
-
-      // Score de risco: ha quanto tempo sem alugar vs cadencia tipica.
-      const expectedInterval = medianInterval || 45;
-      let riskScore = 0;
-      if (recencyDays !== null) riskScore = recencyDays / expectedInterval;
-      const activated = frequency >= 1;
-      const atRisk =
-        activated && recencyDays !== null && recencyDays > 21 && riskScore >= 1.5;
-
-      profiles.push({
-        id: a.id,
-        code: a.code || "",
-        name: a.name || "(sem nome)",
-        frequency,
-        quantity,
-        firstRental,
-        lastRental,
-        recencyDays,
-        medianInterval,
-        expectedInterval,
-        riskScore: Math.round(riskScore * 100) / 100,
-        activated,
-        atRisk,
-      });
+  function rentalDateGaps(dates) {
+    const gaps = [];
+    for (let i = 1; i < dates.length; i++) {
+      const gap = diffDaysISO(dates[i - 1], dates[i]);
+      if (gap !== null && gap >= 0) gaps.push(gap);
     }
-    return profiles;
+    return gaps;
+  }
+
+  function agencyRisk(recencyDays, medianInterval, frequency) {
+    const expectedInterval = medianInterval || 45;
+    const riskScore = recencyDays === null ? 0 : recencyDays / expectedInterval;
+    return {
+      expectedInterval,
+      riskScore,
+      activated: frequency >= 1,
+      atRisk: frequency >= 1 && recencyDays !== null && recencyDays > 21 && riskScore >= 1.5,
+    };
+  }
+
+  function agencyProfile(agency, rows, today) {
+    const rs = rows.filter((r) => parseISO(r.checkout_date));
+    rs.sort((x, y) => x.checkout_date.localeCompare(y.checkout_date));
+    const dates = rs.map((r) => r.checkout_date);
+    const frequency = rs.length;
+    const quantity = rs.reduce((s, r) => s + (Number(r.quantity) || 0), 0);
+    const firstRental = dates[0] || "";
+    const lastRental = dates[dates.length - 1] || "";
+    const recencyDays = lastRental ? diffDaysISO(lastRental, today) : null;
+    const medianInterval = dates.length > 1 ? median(rentalDateGaps(dates)) : null;
+    const risk = agencyRisk(recencyDays, medianInterval, frequency);
+
+    return {
+      id: agency.id,
+      code: agency.code || "",
+      name: agency.name || "(sem nome)",
+      frequency,
+      quantity,
+      firstRental,
+      lastRental,
+      recencyDays,
+      medianInterval,
+      expectedInterval: risk.expectedInterval,
+      riskScore: Math.round(risk.riskScore * 100) / 100,
+      activated: risk.activated,
+      atRisk: risk.atRisk,
+    };
+  }
+
+  function computeAgencyProfiles(matching, agencies, today) {
+    const byAgency = groupByAgency(matching);
+    return agencies.map((agency) => agencyProfile(agency, byAgency.get(agency.id) || [], today));
   }
 
   // ----------------------------- Segmentos RFM ------------------------------
@@ -652,21 +672,24 @@
 
   // ----------------------------- Top agencias -------------------------------
 
+  function agencyGroupFor(groups, rental, agencyById) {
+    const key = rental.agency_id || `__sem__${rental.agency_name}`;
+    if (groups.has(key)) return groups.get(key);
+    const agency = agencyById.get(rental.agency_id);
+    const group = {
+      code: (agency?.code || rental.agency_code || "").trim(),
+      name: agency?.name || rental.agency_name || "(agencia removida)",
+      bookings: 0,
+      quantity: 0,
+    };
+    groups.set(key, group);
+    return group;
+  }
+
   function computeTopAgencies(inPeriod, agencyById, limit = 8) {
     const groups = new Map();
     for (const r of inPeriod) {
-      const key = r.agency_id || `__sem__${r.agency_name}`;
-      let g = groups.get(key);
-      if (!g) {
-        const a = agencyById.get(r.agency_id);
-        g = {
-          code: (a?.code || r.agency_code || "").trim(),
-          name: a?.name || r.agency_name || "(agencia removida)",
-          bookings: 0,
-          quantity: 0,
-        };
-        groups.set(key, g);
-      }
+      const g = agencyGroupFor(groups, r, agencyById);
       g.bookings += 1;
       g.quantity += Number(r.quantity) || 0;
     }
@@ -682,48 +705,55 @@
 
   // ----------------------------- Materiais ----------------------------------
 
-  function computeMaterials(matching, inPeriod, materials, materialById, period, today) {
-    const periodDays = (diffDaysISO(period.from, period.to) || 0) + 1;
-
-    const demand = new Map(); // material_id -> { bookings, units }
+  function demandByMaterial(inPeriod) {
+    const demand = new Map();
     for (const r of inPeriod) {
-      let d = demand.get(r.material_id);
-      if (!d) {
-        d = { bookings: 0, units: 0 };
-        demand.set(r.material_id, d);
-      }
-      d.bookings += 1;
-      d.units += Number(r.quantity) || 0;
+      const current = demand.get(r.material_id) || { bookings: 0, units: 0 };
+      current.bookings += 1;
+      current.units += Number(r.quantity) || 0;
+      demand.set(r.material_id, current);
     }
+    return demand;
+  }
 
-    // Unit-days para fora no periodo (para utilizacao).
+  function addUnitDays(unitDays, rental, period, today) {
+    const interval = rentalOutInterval(rental, today);
+    if (!interval) return;
+    if (interval.end < period.from || interval.start > period.to) return;
+    const days = overlapDays(interval.start, interval.end, period.from, period.to);
+    const qty = Number(rental.quantity) || 0;
+    unitDays.set(rental.material_id, (unitDays.get(rental.material_id) || 0) + days * qty);
+  }
+
+  function unitDaysByMaterial(matching, period, today) {
     const unitDays = new Map();
-    for (const r of matching) {
-      const interval = rentalOutInterval(r, today);
-      if (!interval) continue;
-      if (interval.end < period.from || interval.start > period.to) continue;
-      const days = overlapDays(interval.start, interval.end, period.from, period.to);
-      const qty = Number(r.quantity) || 0;
-      unitDays.set(r.material_id, (unitDays.get(r.material_id) || 0) + days * qty);
-    }
+    for (const r of matching) addUnitDays(unitDays, r, period, today);
+    return unitDays;
+  }
 
-    const list = materials.map((m) => {
-      const total = Number(m.total_quantity) || 0;
-      const d = demand.get(m.id) || { bookings: 0, units: 0 };
-      const capacityUnitDays = total * periodDays;
-      const utilizationPct = capacityUnitDays
-        ? Math.min(100, Math.round((100 * (unitDays.get(m.id) || 0)) / capacityUnitDays))
-        : 0;
-      return {
-        id: m.id,
-        name: m.name,
-        color: m.color || "",
-        total,
-        bookings: d.bookings,
-        units: d.units,
-        utilizationPct,
-      };
-    });
+  function materialPerformance(material, demand, unitDays, periodDays) {
+    const total = Number(material.total_quantity) || 0;
+    const d = demand.get(material.id) || { bookings: 0, units: 0 };
+    const capacityUnitDays = total * periodDays;
+    const utilizationPct = capacityUnitDays
+      ? Math.min(100, Math.round((100 * (unitDays.get(material.id) || 0)) / capacityUnitDays))
+      : 0;
+    return {
+      id: material.id,
+      name: material.name,
+      color: material.color || "",
+      total,
+      bookings: d.bookings,
+      units: d.units,
+      utilizationPct,
+    };
+  }
+
+  function computeMaterials(matching, inPeriod, materials, period, today) {
+    const periodDays = (diffDaysISO(period.from, period.to) || 0) + 1;
+    const demand = demandByMaterial(inPeriod);
+    const unitDays = unitDaysByMaterial(matching, period, today);
+    const list = materials.map((m) => materialPerformance(m, demand, unitDays, periodDays));
 
     const ranking = [...list].sort((a, b) => b.units - a.units || b.bookings - a.bookings);
     const idle = list
@@ -738,11 +768,9 @@
 
   // ----------------------------- Anomalias ----------------------------------
 
-  function computeAnomalies(matching, bookings, period, today) {
-    const out = [];
-
-    // Serie semanal das ultimas ~26 semanas (independe do filtro de periodo,
-    // mas respeita agencia/material/situacao). Conta por aluguel (reserva).
+  // Serie semanal das ultimas ~26 semanas (independe do filtro de periodo,
+  // mas respeita agencia/material/situacao). Conta por aluguel (reserva).
+  function weeklyBookingCounts(bookings, today) {
     const weeks = 26;
     const start = addDaysISO(today, -7 * weeks + 1);
     const buckets = buildBuckets(start, today, "week");
@@ -752,111 +780,128 @@
       const idx = bucketIndexFor(r.checkout_date, buckets);
       if (idx >= 0) counts[idx] += 1;
     }
-    if (counts.length >= 4) {
-      const hist = counts.slice(0, -1);
-      const last = counts[counts.length - 1];
-      const mean = hist.reduce((s, v) => s + v, 0) / hist.length;
-      const variance = hist.reduce((s, v) => s + (v - mean) ** 2, 0) / hist.length;
-      const std = Math.sqrt(variance);
-      if (std > 0 && Math.abs(last - mean) > 2 * std) {
-        out.push({
-          type: last > mean ? "spike" : "drop",
-          severity: last > mean ? "info" : "warn",
-          title: last > mean ? "Pico de alugueis" : "Queda de alugueis",
-          text: `A semana atual registrou ${last} aluguel(eis), ${
-            last > mean ? "acima" : "abaixo"
-          } do esperado (~${Math.round(mean)} +/- ${Math.round(std)}).`,
-        });
-      }
-    }
+    return counts;
+  }
 
-    // Surto de atrasos: periodo atual vs anterior.
-    if (period.prevFrom && period.prevTo) {
-      const cur = lateRate(matching, period.from, period.to, today).rate;
-      const prev = lateRate(matching, period.prevFrom, period.prevTo, today).rate;
-      if (cur - prev >= 15 && cur >= 20) {
-        out.push({
-          type: "overdue",
-          severity: "warn",
-          title: "Surto de atrasos",
-          text: `Taxa de atraso subiu para ${round1(cur)}% (era ${round1(prev)}% no periodo anterior).`,
-        });
-      }
-    }
+  function weeklySpikeAnomaly(counts) {
+    if (counts.length < 4) return null;
+    const hist = counts.slice(0, -1);
+    const last = counts[counts.length - 1];
+    const mean = hist.reduce((s, v) => s + v, 0) / hist.length;
+    const variance = hist.reduce((s, v) => s + (v - mean) ** 2, 0) / hist.length;
+    const std = Math.sqrt(variance);
+    if (std <= 0 || Math.abs(last - mean) <= 2 * std) return null;
+    return {
+      type: last > mean ? "spike" : "drop",
+      severity: last > mean ? "info" : "warn",
+      title: last > mean ? "Pico de alugueis" : "Queda de alugueis",
+      text: `A semana atual registrou ${last} aluguel(eis), ${
+        last > mean ? "acima" : "abaixo"
+      } do esperado (~${Math.round(mean)} +/- ${Math.round(std)}).`,
+    };
+  }
+
+  function overdueSpikeAnomaly(matching, period, today) {
+    if (!period.prevFrom || !period.prevTo) return null;
+    const cur = lateRate(matching, period.from, period.to, today).rate;
+    const prev = lateRate(matching, period.prevFrom, period.prevTo, today).rate;
+    if (cur - prev < 15 || cur < 20) return null;
+    return {
+      type: "overdue",
+      severity: "warn",
+      title: "Surto de atrasos",
+      text: `Taxa de atraso subiu para ${round1(cur)}% (era ${round1(prev)}% no periodo anterior).`,
+    };
+  }
+
+  function computeAnomalies(matching, bookings, period, today) {
+    const out = [];
+    const weekly = weeklySpikeAnomaly(weeklyBookingCounts(bookings, today));
+    const overdue = overdueSpikeAnomaly(matching, period, today);
+    if (weekly) out.push(weekly);
+    if (overdue) out.push(overdue);
 
     return out;
   }
 
   // ----------------------------- Recomendacoes ------------------------------
 
-  function buildInsights(ctx) {
-    const out = [];
-    const { kpis, churnRisk, materialsPerf, segments, anomalies } = ctx;
+  function churnInsight(churnRisk) {
+    if (!churnRisk.length) return null;
+    const names = churnRisk.slice(0, 3).map((c) => c.name).join(", ");
+    return {
+      type: "warn",
+      title: `${churnRisk.length} agencia(s) em risco de churn`,
+      text: `Sem alugar ha mais tempo que o habitual (ex.: ${names}). Considere um contato de reativacao.`,
+    };
+  }
 
-    if (churnRisk.length) {
-      const names = churnRisk.slice(0, 3).map((c) => c.name).join(", ");
-      out.push({
-        type: "warn",
-        title: `${churnRisk.length} agencia(s) em risco de churn`,
-        text: `Sem alugar ha mais tempo que o habitual (ex.: ${names}). Considere um contato de reativacao.`,
-      });
-    }
-
+  function idleMaterialsInsight(materialsPerf) {
     const idle = materialsPerf.idle || [];
-    if (idle.length) {
-      const names = idle.slice(0, 3).map((m) => m.name).join(", ");
-      out.push({
-        type: "info",
-        title: `${idle.length} material(is) sem uso no periodo`,
-        text: `Capital parado em estoque (ex.: ${names}). Avalie realocar ou divulgar.`,
-        action: "Ver materiais",
-        target: "materials",
-      });
-    }
+    if (!idle.length) return null;
+    const names = idle.slice(0, 3).map((m) => m.name).join(", ");
+    return {
+      type: "info",
+      title: `${idle.length} material(is) sem uso no periodo`,
+      text: `Capital parado em estoque (ex.: ${names}). Avalie realocar ou divulgar.`,
+      action: "Ver materiais",
+      target: "materials",
+    };
+  }
 
+  function stockRiskInsight(materialsPerf) {
     const risk = materialsPerf.stockoutRisk || [];
-    if (risk.length) {
-      const top = risk[0];
-      out.push({
-        type: "warn",
-        title: `${risk.length} material(is) perto da capacidade`,
-        text: `${top.name} esta com ${top.utilizationPct}% de utilizacao. Risco de falta em picos de demanda.`,
-        action: "Ver materiais",
-        target: "materials",
-      });
-    }
+    if (!risk.length) return null;
+    const top = risk[0];
+    return {
+      type: "warn",
+      title: `${risk.length} material(is) perto da capacidade`,
+      text: `${top.name} esta com ${top.utilizationPct}% de utilizacao. Risco de falta em picos de demanda.`,
+      action: "Ver materiais",
+      target: "materials",
+    };
+  }
 
-    if (kpis.overdueRate.value >= 25) {
-      out.push({
-        type: "warn",
-        title: `Taxa de atraso em ${kpis.overdueRate.value}%`,
-        text: "Muitas devolucoes fora do prazo. Reforce lembretes de devolucao.",
-        action: "Ver atrasados",
-        target: "overdue",
-      });
-    }
+  function overdueRateInsight(kpis) {
+    if (kpis.overdueRate.value < 25) return null;
+    return {
+      type: "warn",
+      title: `Taxa de atraso em ${kpis.overdueRate.value}%`,
+      text: "Muitas devolucoes fora do prazo. Reforce lembretes de devolucao.",
+      action: "Ver atrasados",
+      target: "overdue",
+    };
+  }
 
+  function dormantInsight(segments) {
     const dormant = (segments.tiers || []).find((t) => t.name === "Dormente");
-    if (dormant && dormant.count >= 3) {
-      out.push({
-        type: "info",
-        title: `${dormant.count} agencia(s) dormentes`,
-        text: "Sem atividade ha mais de 90 dias. Uma campanha de reengajamento pode trazer parte de volta.",
-      });
-    }
+    if (!dormant || dormant.count < 3) return null;
+    return {
+      type: "info",
+      title: `${dormant.count} agencia(s) dormentes`,
+      text: "Sem atividade ha mais de 90 dias. Uma campanha de reengajamento pode trazer parte de volta.",
+    };
+  }
 
-    for (const a of anomalies) {
-      out.push({ type: a.severity, title: a.title, text: a.text });
-    }
+  function noInsightFallback() {
+    return {
+      type: "ok",
+      title: "Tudo sob controle",
+      text: "Nenhum alerta relevante no periodo selecionado.",
+    };
+  }
 
-    if (!out.length) {
-      out.push({
-        type: "ok",
-        title: "Tudo sob controle",
-        text: "Nenhum alerta relevante no periodo selecionado.",
-      });
-    }
-    return out;
+  function buildInsights(ctx) {
+    const { kpis, churnRisk, materialsPerf, segments, anomalies } = ctx;
+    const out = [
+      churnInsight(churnRisk),
+      idleMaterialsInsight(materialsPerf),
+      stockRiskInsight(materialsPerf),
+      overdueRateInsight(kpis),
+      dormantInsight(segments),
+      ...anomalies.map((a) => ({ type: a.severity, title: a.title, text: a.text })),
+    ].filter(Boolean);
+    return out.length ? out : [noInsightFallback()];
   }
 
   function buildNarrative(kpis) {

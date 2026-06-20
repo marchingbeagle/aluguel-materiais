@@ -14,6 +14,67 @@ function parseIntStrict(value) {
   return Number.isInteger(n) ? n : null;
 }
 
+function validateRentalDates(checkout, expectedReturn) {
+  const errors = [];
+  const validCheckout = dateUtils.isValidISO(checkout);
+  const validExpectedReturn = dateUtils.isValidISO(expectedReturn);
+  if (!validCheckout) errors.push("Data de retirada invalida.");
+  if (!validExpectedReturn) errors.push("Data prevista de devolucao invalida.");
+  if (validCheckout && validExpectedReturn && expectedReturn < checkout) {
+    errors.push("Devolucao prevista nao pode ser anterior a retirada.");
+  }
+  return errors;
+}
+
+function normalizeRentalItem(raw, idx, seen) {
+  const label = `Item ${idx + 1}`;
+  const materialId = String(raw?.material_id || "").trim();
+  const quantity = parseIntStrict(raw?.quantity);
+
+  if (!materialId) return { error: `${label}: selecione um material.` };
+  if (seen.has(materialId)) {
+    return { error: `${label}: material repetido. Ajuste a quantidade no item ja adicionado.` };
+  }
+  seen.add(materialId);
+  if (quantity === null || quantity < 1) {
+    return { error: `${label}: quantidade deve ser um numero inteiro maior ou igual a 1.` };
+  }
+  return {
+    item: {
+      id: raw?.id ? String(raw.id) : "",
+      material_id: materialId,
+      quantity,
+    },
+  };
+}
+
+function validateRentalItems(rawItems) {
+  const errors = [];
+  const items = [];
+  const seen = new Set();
+
+  if (!rawItems.length) errors.push("Inclua pelo menos um material.");
+  rawItems.forEach((raw, idx) => {
+    const result = normalizeRentalItem(raw, idx, seen);
+    if (result.error) errors.push(result.error);
+    else items.push(result.item);
+  });
+
+  return { errors, items };
+}
+
+function rentalPayloadClean(data, agencyId, checkout, expectedReturn, items) {
+  return {
+    agency_id: agencyId,
+    event_name: String(data?.event_name || "").trim(),
+    process_number: String(data?.process_number || "").trim(),
+    checkout_date: checkout,
+    expected_return_date: expectedReturn,
+    notes: String(data?.notes || "").trim(),
+    items,
+  };
+}
+
 // Valida e normaliza o payload completo de um aluguel.
 // Retorna { errors, clean } onde clean.items = [{ id?, material_id, quantity }].
 function validateRentalPayload(data) {
@@ -24,56 +85,15 @@ function validateRentalPayload(data) {
 
   const checkout = data?.checkout_date;
   const expectedReturn = data?.expected_return_date;
-  if (!dateUtils.isValidISO(checkout)) errors.push("Data de retirada invalida.");
-  if (!dateUtils.isValidISO(expectedReturn)) errors.push("Data prevista de devolucao invalida.");
-  if (
-    dateUtils.isValidISO(checkout) &&
-    dateUtils.isValidISO(expectedReturn) &&
-    expectedReturn < checkout
-  ) {
-    errors.push("Devolucao prevista nao pode ser anterior a retirada.");
-  }
+  errors.push(...validateRentalDates(checkout, expectedReturn));
 
   const rawItems = Array.isArray(data?.items) ? data.items : [];
-  if (!rawItems.length) errors.push("Inclua pelo menos um material.");
-
-  const items = [];
-  const seen = new Set();
-  rawItems.forEach((raw, idx) => {
-    const label = `Item ${idx + 1}`;
-    const materialId = String(raw?.material_id || "").trim();
-    const quantity = parseIntStrict(raw?.quantity);
-    if (!materialId) {
-      errors.push(`${label}: selecione um material.`);
-      return;
-    }
-    if (seen.has(materialId)) {
-      errors.push(`${label}: material repetido. Ajuste a quantidade no item ja adicionado.`);
-      return;
-    }
-    seen.add(materialId);
-    if (quantity === null || quantity < 1) {
-      errors.push(`${label}: quantidade deve ser um numero inteiro maior ou igual a 1.`);
-      return;
-    }
-    items.push({
-      id: raw?.id ? String(raw.id) : "",
-      material_id: materialId,
-      quantity,
-    });
-  });
+  const itemValidation = validateRentalItems(rawItems);
+  errors.push(...itemValidation.errors);
 
   return {
     errors,
-    clean: {
-      agency_id: agencyId,
-      event_name: String(data?.event_name || "").trim(),
-      process_number: String(data?.process_number || "").trim(),
-      checkout_date: checkout,
-      expected_return_date: expectedReturn,
-      notes: String(data?.notes || "").trim(),
-      items,
-    },
+    clean: rentalPayloadClean(data, agencyId, checkout, expectedReturn, itemValidation.items),
   };
 }
 

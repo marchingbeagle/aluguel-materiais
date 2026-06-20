@@ -17,7 +17,7 @@ function createWindow() {
     height: 820,
     minWidth: 960,
     minHeight: 600,
-    title: "Aluguel de Materiais",
+    title: "Gestão de Materiais",
     backgroundColor: "#1e3314",
     webPreferences: {
       preload: path.join(__dirname, "..", "preload", "preload.js"),

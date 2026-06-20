@@ -107,6 +107,38 @@ function movementTotalValue(movement) {
   return unit > 0 && qty > 0 ? unit * qty : 0;
 }
 
+function emptyInventoryAgg() {
+  return { current: 0, entries: 0, exits: 0, purchaseQty: 0, purchaseValue: 0, lastMovement: "" };
+}
+
+function ensureInventoryAgg(map, productId) {
+  if (!map.has(productId)) map.set(productId, emptyInventoryAgg());
+  return map.get(productId);
+}
+
+function applyMovementToInventory(agg, movement) {
+  const qty = Number(movement.quantity) || 0;
+  if (movement.type === TYPE_OUT) {
+    agg.exits += qty;
+    agg.current -= qty;
+    return;
+  }
+
+  agg.entries += qty;
+  agg.current += qty;
+  const value = movementTotalValue(movement);
+  if (value > 0) {
+    agg.purchaseQty += qty;
+    agg.purchaseValue += value;
+  }
+}
+
+function updateLastMovement(agg, movementDate) {
+  if (movementDate && (!agg.lastMovement || movementDate > agg.lastMovement)) {
+    agg.lastMovement = movementDate;
+  }
+}
+
 function buildInventory(products, movements) {
   const movementRows = Array.isArray(movements) ? movements : [];
   const byProduct = new Map();
@@ -114,30 +146,13 @@ function buildInventory(products, movements) {
   for (const m of movementRows) {
     const productId = text(m.product_id);
     if (!productId) continue;
-    if (!byProduct.has(productId)) {
-      byProduct.set(productId, { current: 0, entries: 0, exits: 0, purchaseQty: 0, purchaseValue: 0, lastMovement: "" });
-    }
-    const agg = byProduct.get(productId);
-    const qty = Number(m.quantity) || 0;
-    if (m.type === TYPE_OUT) {
-      agg.exits += qty;
-      agg.current -= qty;
-    } else {
-      agg.entries += qty;
-      agg.current += qty;
-      const value = movementTotalValue(m);
-      if (value > 0) {
-        agg.purchaseQty += qty;
-        agg.purchaseValue += value;
-      }
-    }
-    if (m.movement_date && (!agg.lastMovement || m.movement_date > agg.lastMovement)) {
-      agg.lastMovement = m.movement_date;
-    }
+    const agg = ensureInventoryAgg(byProduct, productId);
+    applyMovementToInventory(agg, m);
+    updateLastMovement(agg, m.movement_date);
   }
 
   return (Array.isArray(products) ? products : []).map((p) => {
-    const agg = byProduct.get(p.id) || { current: 0, entries: 0, exits: 0, purchaseQty: 0, purchaseValue: 0, lastMovement: "" };
+    const agg = byProduct.get(p.id) || emptyInventoryAgg();
     const avgCost = agg.purchaseQty > 0 ? agg.purchaseValue / agg.purchaseQty : 0;
     const minStock = Number(p.min_stock) || 0;
     const maxStock = Number(p.max_stock) || 0;

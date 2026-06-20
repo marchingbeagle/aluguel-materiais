@@ -91,28 +91,39 @@
     return { match: true, score };
   }
 
-  function rentalSearchScore(rental, term) {
-    const query = String(term ?? "").trim();
-    if (!query) return 0;
+  function exactOrPartialScore(needle, haystack) {
+    if (!needle || !haystack) return null;
+    if (haystack === needle) return 1000;
+    if (haystack.includes(needle)) return 900;
+    return null;
+  }
 
-    const processNumber = String(rental?.process_number || "");
-    const normalizedQuery = normalizeText(query);
-    const normalizedProcess = normalizeText(processNumber);
-    const queryDigits = digitsOnly(query);
-    const processDigits = digitsOnly(processNumber);
+  function processNumberScore(query, processNumber) {
+    const textScore = exactOrPartialScore(normalizeText(query), normalizeText(processNumber));
+    const digitScore = exactOrPartialScore(digitsOnly(query), digitsOnly(processNumber));
+    if (textScore === 1000 || digitScore === 1000) return 1000;
+    if (textScore === 900 || digitScore === 900) return 900;
+    return null;
+  }
 
-    if (normalizedProcess && normalizedProcess === normalizedQuery) return 1000;
-    if (queryDigits && processDigits && processDigits === queryDigits) return 1000;
-    if (normalizedProcess && normalizedProcess.includes(normalizedQuery)) return 900;
-    if (queryDigits && processDigits && processDigits.includes(queryDigits)) return 900;
-
+  function rentalTextValues(rental) {
     const materialNames = (rental?.items || []).map((it) => it.material_name);
-    const textResult = fuzzyTextMatches(query, [
+    return [
       rental?.event_name,
       rental?.agency_name,
       rental?.agency_code,
       ...materialNames,
-    ]);
+    ];
+  }
+
+  function rentalSearchScore(rental, term) {
+    const query = String(term ?? "").trim();
+    if (!query) return 0;
+
+    const processScore = processNumberScore(query, String(rental?.process_number || ""));
+    if (processScore !== null) return processScore;
+
+    const textResult = fuzzyTextMatches(query, rentalTextValues(rental));
     return textResult.match ? textResult.score : -1;
   }
 
