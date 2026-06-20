@@ -17,30 +17,44 @@
           </div>
         </div>
         <nav class="nav">
-          <button class="nav-item active" data-view="dashboard">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1"></rect><rect x="14" y="3" width="7" height="5" rx="1"></rect><rect x="14" y="12" width="7" height="9" rx="1"></rect><rect x="3" y="16" width="7" height="5" rx="1"></rect></svg>
-            <span>Painel</span>
-          </button>
-          <button class="nav-item" data-view="materials">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><path d="M3.3 7 12 12l8.7-5"></path><path d="M12 22V12"></path></svg>
-            <span>Materiais</span>
-          </button>
-          <button class="nav-item" data-view="stock">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h16"></path><path d="M5 9l1 11h12l1-11"></path><path d="M8 9V6a4 4 0 0 1 8 0v3"></path><path d="M9 14h6"></path></svg>
-            <span>Estoque</span>
-          </button>
-          <button class="nav-item" data-view="agencies">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21h18"></path><path d="M5 21V7l7-4 7 4v14"></path><path d="M9 21v-6h6v6"></path><path d="M9 9h.01"></path><path d="M15 9h.01"></path><path d="M12 12h.01"></path></svg>
-            <span>Agencias</span>
-          </button>
-          <button class="nav-item" data-view="rentals">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13"></path><path d="M8 12h13"></path><path d="M8 18h13"></path><path d="M3 6h.01"></path><path d="M3 12h.01"></path><path d="M3 18h.01"></path></svg>
-            <span>Alugueis</span>
-          </button>
-          <button class="nav-item" data-view="calendar">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"></rect><path d="M16 2v4"></path><path d="M8 2v4"></path><path d="M3 10h18"></path><path d="M8 14h.01"></path><path d="M12 14h.01"></path><path d="M16 14h.01"></path><path d="M8 18h.01"></path><path d="M12 18h.01"></path></svg>
-            <span>Calendario</span>
-          </button>
+          <div class="nav-section">
+            <span class="nav-section-title">Aluguel</span>
+            <button class="nav-item active" data-view="dashboard">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1"></rect><rect x="14" y="3" width="7" height="5" rx="1"></rect><rect x="14" y="12" width="7" height="9" rx="1"></rect><rect x="3" y="16" width="7" height="5" rx="1"></rect></svg>
+              <span>Painel</span>
+            </button>
+            <button class="nav-item" data-view="materials">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><path d="M3.3 7 12 12l8.7-5"></path><path d="M12 22V12"></path></svg>
+              <span>Materiais</span>
+            </button>
+            <button class="nav-item" data-view="agencies">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21h18"></path><path d="M5 21V7l7-4 7 4v14"></path><path d="M9 21v-6h6v6"></path><path d="M9 9h.01"></path><path d="M15 9h.01"></path><path d="M12 12h.01"></path></svg>
+              <span>Agencias</span>
+            </button>
+            <button class="nav-item" data-view="rentals">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13"></path><path d="M8 12h13"></path><path d="M8 18h13"></path><path d="M3 6h.01"></path><path d="M3 12h.01"></path><path d="M3 18h.01"></path></svg>
+              <span>Alugueis</span>
+            </button>
+            <button class="nav-item" data-view="calendar">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"></rect><path d="M16 2v4"></path><path d="M8 2v4"></path><path d="M3 10h18"></path><path d="M8 14h.01"></path><path d="M12 14h.01"></path><path d="M16 14h.01"></path><path d="M8 18h.01"></path><path d="M12 18h.01"></path></svg>
+              <span>Calendario</span>
+            </button>
+          </div>
+          <div class="nav-section nav-section-stock">
+            <span class="nav-section-title">Estoque</span>
+            <button class="nav-item" data-view="stock-dashboard">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5"></path><path d="M4 19h16"></path><path d="M8 16v-5"></path><path d="M12 16V8"></path><path d="M16 16v-3"></path><path d="M20 16V7"></path></svg>
+              <span>Dashboard</span>
+            </button>
+            <button class="nav-item" data-view="stock-products">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h16"></path><path d="M5 9l1 11h12l1-11"></path><path d="M8 9V6a4 4 0 0 1 8 0v3"></path><path d="M9 14h6"></path></svg>
+              <span>Produtos</span>
+            </button>
+            <button class="nav-item" data-view="stock-movements">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h11"></path><path d="M14 3l4 4-4 4"></path><path d="M17 17H6"></path><path d="M10 13l-4 4 4 4"></path></svg>
+              <span>Entradas e saidas</span>
+            </button>
+          </div>
         </nav>
         <div class="sidebar-footer">
           <span id="syncDot" class="sync-dot" title="Estado da sincronizacao"></span>
@@ -130,13 +144,17 @@
             <div class="panel">
               <div class="panel-head">
                 <h2>Alugueis ao longo do tempo</h2>
-                <span class="muted small">vs periodo anterior</span>
+                <div class="panel-actions">
+                  <span class="muted small">vs periodo anterior</span>
+                  <button type="button" class="btn btn-sm btn-ghost btn-detail" data-detail="dash-trend-rentals">Ver detalhes</button>
+                </div>
               </div>
               <div class="chart-box"><canvas id="chartRentals"></canvas></div>
             </div>
             <div class="panel">
               <div class="panel-head">
                 <h2>Unidades em uso e atrasos</h2>
+                <button type="button" class="btn btn-sm btn-ghost btn-detail" data-detail="dash-trend-units">Ver detalhes</button>
               </div>
               <div class="chart-box"><canvas id="chartUnits"></canvas></div>
             </div>
@@ -147,14 +165,20 @@
             <div class="panel">
               <div class="panel-head">
                 <h2>Engajamento das agencias</h2>
-                <span class="muted small">base atual</span>
+                <div class="panel-actions">
+                  <span class="muted small">base atual</span>
+                  <button type="button" class="btn btn-sm btn-ghost btn-detail" data-detail="dash-engagement">Ver detalhes</button>
+                </div>
               </div>
               <div id="engagement" class="funnel"></div>
             </div>
             <div class="panel">
               <div class="panel-head">
                 <h2>Sazonalidade das reservas</h2>
-                <span class="muted small">dia x mes</span>
+                <div class="panel-actions">
+                  <span class="muted small">dia x mes</span>
+                  <button type="button" class="btn btn-sm btn-ghost btn-detail" data-detail="dash-seasonality">Ver detalhes</button>
+                </div>
               </div>
               <div class="cohort-wrap"><div id="seasonality" class="cohort"></div></div>
             </div>
@@ -163,7 +187,10 @@
           <!-- Agencias com mais reservas + alugueis ativos -->
           <div class="dash-row dash-row-2">
             <div class="panel">
-              <div class="panel-head"><h2>Agencias com mais reservas</h2></div>
+              <div class="panel-head">
+                <h2>Agencias com mais reservas</h2>
+                <button type="button" class="btn btn-sm btn-ghost btn-detail" data-detail="dash-top-agencies">Ver detalhes</button>
+              </div>
               <div class="table-wrap table-scroll">
                 <table id="top-agencies">
                   <thead>
@@ -176,7 +203,10 @@
             <div class="panel">
               <div class="panel-head">
                 <h2>Alugueis ativos</h2>
-                <span class="muted small" id="activeCount"></span>
+                <div class="panel-actions">
+                  <span class="muted small" id="activeCount"></span>
+                  <button type="button" class="btn btn-sm btn-ghost btn-detail" data-detail="dash-active-rentals">Ver detalhes</button>
+                </div>
               </div>
               <div class="table-wrap table-scroll">
                 <table id="dashboard-active">
@@ -191,7 +221,10 @@
 
           <!-- Desempenho de materiais -->
           <div class="panel">
-            <div class="panel-head"><h2>Demanda e utilizacao de materiais</h2></div>
+            <div class="panel-head">
+              <h2>Demanda e utilizacao de materiais</h2>
+              <button type="button" class="btn btn-sm btn-ghost btn-detail" data-detail="dash-materials">Ver detalhes</button>
+            </div>
             <div class="chart-box"><canvas id="chartMaterials"></canvas></div>
           </div>
 
@@ -209,74 +242,202 @@
           <div class="table-wrap">
             <table id="materials-table">
               <thead>
-                <tr><th>Nome</th><th>Total</th><th>Alugado</th><th>Observacoes</th><th class="col-actions">Acoes</th></tr>
+                <tr><th class="sortable" data-sort-table="materials" data-sort-key="name">Nome</th><th class="sortable" data-sort-table="materials" data-sort-key="total_quantity" data-sort-default="desc">Total</th><th class="sortable" data-sort-table="materials" data-sort-key="rented" data-sort-default="desc">Alugado</th><th class="sortable" data-sort-table="materials" data-sort-key="notes">Observacoes</th><th class="col-actions">Acoes</th></tr>
               </thead>
               <tbody></tbody>
             </table>
           </div>
         </section>
 
-        <!-- ESTOQUE -->
-        <section id="view-stock" class="view">
+        <!-- DASHBOARD DE ESTOQUE -->
+        <section id="view-stock-dashboard" class="view">
           <header class="view-header">
             <div>
-              <h1>Estoque</h1>
-              <p class="muted">Produtos, entradas, saidas e alertas de reposicao.</p>
+              <h1>Dashboard de estoque</h1>
+              <p class="muted">Alertas de compra, saldos e movimentacoes dos produtos.</p>
             </div>
             <div class="header-actions">
-              <button class="btn" id="addStockMovementBtn">Nova movimentacao</button>
-              <button class="btn btn-primary" id="addStockProductBtn">Novo produto</button>
+              <button class="btn" data-nav-target="stock-movements">Ver movimentacoes</button>
+              <button class="btn btn-primary" data-nav-target="stock-products">Ver produtos</button>
             </div>
           </header>
 
+          <div class="filter-bar stock-dashboard-filters">
+            <div class="filter-group">
+              <label for="stockDashSearch">Busca</label>
+              <input type="search" id="stockDashSearch" placeholder="Produto, codigo, categoria..." />
+            </div>
+            <div class="filter-group">
+              <label for="stockDashCategoryFilter">Categoria</label>
+              <select id="stockDashCategoryFilter"><option value="">Todas</option></select>
+            </div>
+            <div class="filter-group">
+              <label for="stockDashSupplierFilter">Fornecedor</label>
+              <select id="stockDashSupplierFilter"><option value="">Todos</option></select>
+            </div>
+            <button type="button" class="btn btn-sm btn-ghost" id="stockDashClearFilters">Limpar filtros</button>
+          </div>
+
           <div class="kpi-grid stock-kpis" id="stockKpiGrid"></div>
 
-          <div class="dash-row dash-row-2">
-            <div class="panel">
-              <div class="panel-head"><h2>Situacao do estoque</h2></div>
-              <div class="chart-box"><canvas id="chartStockStatus"></canvas></div>
-            </div>
-            <div class="panel">
-              <div class="panel-head"><h2>Estoque por categoria</h2></div>
-              <div class="chart-box"><canvas id="chartStockCategory"></canvas></div>
-            </div>
-          </div>
-
-          <div class="panel">
+          <div class="panel panel-purchase-alert">
             <div class="panel-head">
-              <h2>Produtos</h2>
-              <input type="search" id="stockProductSearch" placeholder="Buscar por codigo, descricao, categoria..." />
-            </div>
-            <div class="table-wrap table-scroll">
-              <table id="stock-products-table">
-                <thead>
-                  <tr><th>Codigo</th><th>Produto</th><th>Categoria</th><th>Atual</th><th>Min.</th><th>Max.</th><th>Valor estoque</th><th>Situacao</th><th class="col-actions">Acoes</th></tr>
-                </thead>
-                <tbody></tbody>
-              </table>
-            </div>
-          </div>
-
-          <div class="panel">
-            <div class="panel-head">
-              <h2>Entradas e saidas</h2>
-              <div class="stock-filters">
-                <input type="search" id="stockMovementSearch" placeholder="Buscar produto..." />
-                <select id="stockMovementTypeFilter">
-                  <option value="">Todos os tipos</option>
-                  <option value="entrada">Entradas</option>
-                  <option value="saida">Saidas</option>
-                </select>
+              <div>
+                <h2>Comprar para atingir o estoque minimo</h2>
+                <p class="muted small">Produtos abaixo do estoque minimo, ordenados pelo maior deficit.</p>
+              </div>
+              <div class="panel-actions">
+                <span class="badge badge-overdue" id="purchaseAlertCount">0 item(ns)</span>
+                <button type="button" class="btn btn-sm btn-ghost btn-detail" data-detail="stock-purchase">Ver detalhes</button>
               </div>
             </div>
             <div class="table-wrap table-scroll">
-              <table id="stock-movements-table">
+              <table id="stock-purchase-table">
                 <thead>
-                  <tr><th>Data</th><th>Produto</th><th>Tipo</th><th>Qtd</th><th>Valor unit.</th><th>Valor transacao</th><th>Obs.</th><th class="col-actions">Acoes</th></tr>
+                  <tr><th class="sortable" data-sort-table="stockPurchase" data-sort-key="name">Produto</th><th class="sortable" data-sort-table="stockPurchase" data-sort-key="category">Categoria</th><th class="sortable" data-sort-table="stockPurchase" data-sort-key="current_stock" data-sort-default="desc">Atual</th><th class="sortable" data-sort-table="stockPurchase" data-sort-key="min_stock" data-sort-default="desc">Minimo</th><th class="sortable" data-sort-table="stockPurchase" data-sort-key="needed" data-sort-default="desc">Comprar</th><th class="sortable" data-sort-table="stockPurchase" data-sort-key="last_movement_date" data-sort-default="desc">Ult. mov.</th><th class="col-actions">Acoes</th></tr>
                 </thead>
                 <tbody></tbody>
               </table>
             </div>
+          </div>
+
+          <div class="dash-row dash-row-2">
+            <div class="panel">
+              <div class="panel-head">
+                <h2>Situacao do estoque</h2>
+                <button type="button" class="btn btn-sm btn-ghost btn-detail" data-detail="stock-status">Ver detalhes</button>
+              </div>
+              <div class="chart-box"><canvas id="chartStockStatus"></canvas></div>
+            </div>
+            <div class="panel">
+              <div class="panel-head">
+                <h2>Estoque por categoria</h2>
+                <button type="button" class="btn btn-sm btn-ghost btn-detail" data-detail="stock-category">Ver detalhes</button>
+              </div>
+              <div class="chart-box"><canvas id="chartStockCategory"></canvas></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- PRODUTOS DE ESTOQUE -->
+        <section id="view-stock-products" class="view">
+          <header class="view-header">
+            <div>
+              <h1>Produtos de estoque</h1>
+              <p class="muted">Cadastro de produtos, limites minimo/maximo e fornecedores.</p>
+            </div>
+            <div class="header-actions">
+              <button class="btn" id="downloadStockProductsReportBtn">Baixar relatorio CSV</button>
+              <button class="btn btn-primary" id="addStockProductBtn">Novo produto</button>
+            </div>
+          </header>
+          <div class="filter-bar stock-list-filters">
+            <div class="filter-group filter-grow">
+              <label for="stockProductSearch">Busca</label>
+              <input type="search" id="stockProductSearch" placeholder="Codigo, descricao, categoria, fornecedor..." />
+            </div>
+            <div class="filter-group">
+              <label for="stockProductCategoryFilter">Categoria</label>
+              <select id="stockProductCategoryFilter"><option value="">Todas</option></select>
+            </div>
+            <div class="filter-group">
+              <label for="stockProductSupplierFilter">Fornecedor</label>
+              <select id="stockProductSupplierFilter"><option value="">Todos</option></select>
+            </div>
+            <div class="filter-group">
+              <label for="stockProductStatusFilter">Situacao</label>
+              <select id="stockProductStatusFilter">
+                <option value="">Todas</option>
+                <option value="needs_purchase">Comprar agora</option>
+                <option value="low">Abaixo do minimo</option>
+                <option value="empty">Sem estoque</option>
+                <option value="ok">Dentro da faixa</option>
+                <option value="excess">Excedente</option>
+              </select>
+            </div>
+            <div class="filter-group">
+              <label for="stockProductSort">Ordenar</label>
+              <select id="stockProductSort">
+                <option value="needed">Maior necessidade</option>
+                <option value="id">Codigo</option>
+                <option value="name">Nome</option>
+                <option value="category">Categoria</option>
+                <option value="supplier">Fornecedor</option>
+                <option value="current_stock">Estoque atual</option>
+                <option value="min_stock">Estoque minimo</option>
+                <option value="max_stock">Estoque maximo</option>
+                <option value="stock_value">Valor em estoque</option>
+                <option value="status">Situacao</option>
+              </select>
+            </div>
+            <button type="button" class="btn btn-sm btn-ghost" id="stockProductClearFilters">Limpar filtros</button>
+          </div>
+          <div class="table-wrap">
+            <table id="stock-products-table">
+              <thead>
+                <tr><th class="sortable" data-sort-table="stockProducts" data-sort-key="id">Codigo</th><th class="sortable" data-sort-table="stockProducts" data-sort-key="name">Produto</th><th class="sortable" data-sort-table="stockProducts" data-sort-key="category">Categoria</th><th class="sortable" data-sort-table="stockProducts" data-sort-key="supplier">Fornecedor</th><th class="sortable" data-sort-table="stockProducts" data-sort-key="current_stock" data-sort-default="desc">Atual</th><th class="sortable" data-sort-table="stockProducts" data-sort-key="min_stock" data-sort-default="desc">Min.</th><th class="sortable" data-sort-table="stockProducts" data-sort-key="needed" data-sort-default="desc">Comprar</th><th class="sortable" data-sort-table="stockProducts" data-sort-key="max_stock" data-sort-default="desc">Max.</th><th class="sortable" data-sort-table="stockProducts" data-sort-key="stock_value" data-sort-default="desc">Valor estoque</th><th class="sortable" data-sort-table="stockProducts" data-sort-key="status">Situacao</th><th class="col-actions">Acoes</th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- MOVIMENTACOES DE ESTOQUE -->
+        <section id="view-stock-movements" class="view">
+          <header class="view-header">
+            <div>
+              <h1>Entradas e saidas</h1>
+              <p class="muted">Historico de movimentacoes do estoque.</p>
+            </div>
+            <div class="header-actions">
+              <button class="btn" id="downloadStockMovementsReportBtn">Baixar relatorio CSV</button>
+              <button class="btn btn-primary" id="addStockMovementBtn">Nova movimentacao</button>
+            </div>
+          </header>
+          <div class="filter-bar stock-list-filters">
+            <div class="filter-group filter-grow">
+              <label for="stockMovementSearch">Busca</label>
+              <input type="search" id="stockMovementSearch" placeholder="Produto, codigo ou observacao..." />
+            </div>
+            <div class="filter-group">
+              <label for="stockMovementProductFilter">Produto</label>
+              <select id="stockMovementProductFilter"><option value="">Todos</option></select>
+            </div>
+            <div class="filter-group">
+              <label for="stockMovementCategoryFilter">Categoria</label>
+              <select id="stockMovementCategoryFilter"><option value="">Todas</option></select>
+            </div>
+            <div class="filter-group">
+              <label for="stockMovementTypeFilter">Tipo</label>
+              <select id="stockMovementTypeFilter">
+                <option value="">Todos</option>
+                <option value="entrada">Entradas</option>
+                <option value="saida">Saidas</option>
+              </select>
+            </div>
+            <div class="filter-group filter-custom">
+              <label for="stockMovementFromBR">De</label>
+              <div class="date-field">
+                <input type="text" id="stockMovementFromBR" class="date-br" data-target="stockMovementFrom" inputmode="numeric" maxlength="10" placeholder="dd/mm/aaaa" autocomplete="off" />
+                <button type="button" class="date-pick-btn" data-pick="stockMovementFrom" aria-label="Abrir calendario"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg></button>
+                <input type="date" class="date-native" id="stockMovementFrom" tabindex="-1" aria-hidden="true" />
+              </div>
+              <label for="stockMovementToBR">ate</label>
+              <div class="date-field">
+                <input type="text" id="stockMovementToBR" class="date-br" data-target="stockMovementTo" inputmode="numeric" maxlength="10" placeholder="dd/mm/aaaa" autocomplete="off" />
+                <button type="button" class="date-pick-btn" data-pick="stockMovementTo" aria-label="Abrir calendario"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg></button>
+                <input type="date" class="date-native" id="stockMovementTo" tabindex="-1" aria-hidden="true" />
+              </div>
+            </div>
+            <button type="button" class="btn btn-sm btn-ghost" id="stockMovementClearFilters">Limpar filtros</button>
+          </div>
+          <div class="table-wrap">
+            <table id="stock-movements-table">
+              <thead>
+                <tr><th class="sortable" data-sort-table="stockMovements" data-sort-key="movement_date" data-sort-default="desc">Data</th><th class="sortable" data-sort-table="stockMovements" data-sort-key="product">Produto</th><th class="sortable" data-sort-table="stockMovements" data-sort-key="category">Categoria</th><th class="sortable" data-sort-table="stockMovements" data-sort-key="type">Tipo</th><th class="sortable" data-sort-table="stockMovements" data-sort-key="quantity" data-sort-default="desc">Qtd</th><th class="sortable" data-sort-table="stockMovements" data-sort-key="unit_cost" data-sort-default="desc">Valor unit.</th><th class="sortable" data-sort-table="stockMovements" data-sort-key="total_value" data-sort-default="desc">Valor transacao</th><th class="sortable" data-sort-table="stockMovements" data-sort-key="notes">Obs.</th><th class="col-actions">Acoes</th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
           </div>
         </section>
 
@@ -292,7 +453,7 @@
           <div class="table-wrap">
             <table id="agencies-table">
               <thead>
-                <tr><th>Codigo</th><th>Nome</th><th>Contato</th><th>Telefone</th><th>E-mail</th><th>Observacoes</th><th class="col-actions">Acoes</th></tr>
+                <tr><th class="sortable" data-sort-table="agencies" data-sort-key="code">Codigo</th><th class="sortable" data-sort-table="agencies" data-sort-key="name">Nome</th><th class="sortable" data-sort-table="agencies" data-sort-key="contact_person">Contato</th><th class="sortable" data-sort-table="agencies" data-sort-key="phone">Telefone</th><th class="sortable" data-sort-table="agencies" data-sort-key="email">E-mail</th><th class="sortable" data-sort-table="agencies" data-sort-key="notes">Observacoes</th><th class="col-actions">Acoes</th></tr>
               </thead>
               <tbody></tbody>
             </table>
@@ -307,7 +468,7 @@
           </header>
           <div class="filters">
             <div class="filters-row">
-              <input type="search" id="rentalSearch" placeholder="Buscar por material, agencia ou evento..." />
+              <input type="search" id="rentalSearch" placeholder="Buscar por processo, evento, material ou agencia..." />
               <select id="rentalAgencyFilter"><option value="">Todas as agencias</option></select>
               <input type="text" id="rentalAgencyCodeFilter" inputmode="numeric" placeholder="Codigo da agencia" />
               <select id="rentalMaterialFilter"><option value="">Todos os materiais</option></select>
@@ -356,7 +517,7 @@
           <div class="table-wrap">
             <table id="rentals-table">
               <thead>
-                <tr><th>Cod.</th><th>Agencia</th><th>Evento</th><th>Materiais</th><th>Retirada</th><th>Prev. devolucao</th><th>Situacao</th><th>Anexos</th><th class="col-actions">Acoes</th></tr>
+                <tr><th class="sortable" data-sort-table="rentals" data-sort-key="agency_code">Cod.</th><th class="sortable" data-sort-table="rentals" data-sort-key="agency">Agencia</th><th class="sortable" data-sort-table="rentals" data-sort-key="event_name">Evento</th><th class="sortable" data-sort-table="rentals" data-sort-key="process_number">Processo</th><th class="sortable" data-sort-table="rentals" data-sort-key="materials">Materiais</th><th class="sortable" data-sort-table="rentals" data-sort-key="checkout_date" data-sort-default="desc">Retirada</th><th class="sortable" data-sort-table="rentals" data-sort-key="expected_return_date" data-sort-default="desc">Prev. devolucao</th><th class="sortable" data-sort-table="rentals" data-sort-key="status">Situacao</th><th>Anexos</th><th class="col-actions">Acoes</th></tr>
               </thead>
               <tbody></tbody>
             </table>
@@ -480,6 +641,7 @@
     <script src="vendor/chart.umd.min.js"></script>
     <script src="../shared/dates.js"></script>
     <script src="../shared/formState.js"></script>
+    <script src="../shared/search.js"></script>
     <script src="analytics.js"></script>
     <script src="app.js"></script>
   </body>

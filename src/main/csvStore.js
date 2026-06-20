@@ -43,6 +43,7 @@ const SCHEMAS = {
     { key: "id", header: "id" },
     { key: "agency_id", header: "id_agencia" },
     { key: "event_name", header: "nome_evento" },
+    { key: "process_number", header: "numero_processo" },
     { key: "checkout_date", header: "data_retirada" },
     { key: "expected_return_date", header: "data_prevista_devolucao" },
     { key: "notes", header: "observacoes" },
@@ -159,7 +160,7 @@ function readAll(filePath, schema) {
   let raw;
   try {
     raw = fs.readFileSync(filePath, "utf8");
-  } catch (_err) {
+  } catch {
     return [];
   }
 
@@ -230,7 +231,9 @@ function writeAll(filePath, schema, rows) {
     // Em alguns sistemas/cloud o rename por cima pode falhar; tenta limpar o tmp.
     try {
       fs.unlinkSync(tmpPath);
-    } catch (_ignore) {}
+    } catch {
+      // Se a limpeza falhar, o erro original de rename continua sendo propagado.
+    }
     throw err;
   }
 }
@@ -245,7 +248,7 @@ function migrateLegacy(oldPath, newPath, schema) {
   let raw;
   try {
     raw = fs.readFileSync(oldPath, "utf8").replace(/^\uFEFF/, "");
-  } catch (_err) {
+  } catch {
     return false;
   }
 
@@ -318,6 +321,7 @@ function migrateRentalsToItems(rentalsPath, itemsPath, rentalsSchema, itemsSchem
       id: old.id,
       agency_id: old.agency_id,
       event_name: "",
+      process_number: "",
       checkout_date: old.checkout_date,
       expected_return_date: old.expected_return_date,
       notes: old.notes,
@@ -354,7 +358,7 @@ function readHeaderLine(filePath) {
   let raw;
   try {
     raw = fs.readFileSync(filePath, "utf8");
-  } catch (_err) {
+  } catch {
     return null;
   }
   raw = raw.replace(/^\uFEFF/, "");
@@ -391,7 +395,7 @@ function fileSignature(filePath) {
   try {
     const st = fs.statSync(filePath);
     return `${st.mtimeMs}:${st.size}`;
-  } catch (_err) {
+  } catch {
     return "missing";
   }
 }

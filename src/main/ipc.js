@@ -194,6 +194,7 @@ function buildSnapshot() {
         agency_name: r.agency_name,
         agency_code: r.agency_code,
         event_name: r.event_name,
+        process_number: r.process_number,
         quantity: it.quantity,
         checkout_date: r.checkout_date,
         expected_return_date: r.expected_return_date,
@@ -461,11 +462,11 @@ function registerIpc() {
       const p = paths[key];
       const existedBefore = fs.existsSync(p);
       store.ensureFile(p, SCHEMAS[key]);
-      let readable = false;
+      let readable;
       try {
         fs.accessSync(p, fs.constants.R_OK | fs.constants.W_OK);
         readable = true;
-      } catch (_err) {
+      } catch {
         readable = false;
       }
       report[key] = { path: p, existedBefore, exists: fs.existsSync(p), readable, created: !existedBefore };
@@ -972,7 +973,7 @@ function registerIpc() {
 
         // Copia os anexos so depois de todas as validacoes. Se a copia falhar,
         // os arquivos ja copiados sao removidos e nada e gravado.
-        let attachmentRows = [];
+        let attachmentRows;
         try {
           attachmentRows = copyAttachmentFiles(rentalId, files, stamp);
         } catch (err) {
@@ -1001,6 +1002,7 @@ function registerIpc() {
               id: rentalId,
               agency_id: clean.agency_id,
               event_name: clean.event_name,
+              process_number: clean.process_number,
               checkout_date: clean.checkout_date,
               expected_return_date: clean.expected_return_date,
               notes: clean.notes,
@@ -1117,6 +1119,7 @@ function registerIpc() {
         ...current,
         agency_id: clean.agency_id,
         event_name: clean.event_name,
+        process_number: clean.process_number,
         checkout_date: clean.checkout_date,
         expected_return_date: clean.expected_return_date,
         notes: clean.notes,
@@ -1215,7 +1218,9 @@ function registerIpc() {
       let size = 0;
       try {
         size = fs.statSync(p).size;
-      } catch (_err) {}
+      } catch {
+        // Tamanho fica 0 quando o arquivo nao pode ser lido neste momento.
+      }
       const name = path.basename(p);
       const check = attachments.validateSource(p, name);
       return { path: p, name, size, valid: check.ok, message: check.ok ? "" : check.message };

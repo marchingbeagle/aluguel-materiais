@@ -49,10 +49,6 @@
     return Math.round((db - da) / DAY_MS);
   }
 
-  function monthKey(iso) {
-    return iso && iso.length >= 7 ? iso.slice(0, 7) : "";
-  }
-
   function monthLabel(key) {
     if (!key || key.length < 7) return "Sem data";
     const [y, m] = key.split("-");
@@ -385,7 +381,7 @@
 
   // ----------------------------- KPIs ---------------------------------------
 
-  function periodMetrics(rentals, today) {
+  function periodMetrics(rentals) {
     const agencies = new Set();
     let units = 0;
     for (const r of rentals) {
@@ -863,7 +859,7 @@
     return out;
   }
 
-  function buildNarrative(kpis, period) {
+  function buildNarrative(kpis) {
     const parts = [];
     const r = kpis.rentals;
     if (r.pct !== null && r.prev !== null) {
